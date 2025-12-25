@@ -96,7 +96,11 @@ Detailed guides are available in the `docs/` directory:
 
 ## 🤝 Contributing
 
-Contributions are welcome! Please feel free to submit a Pull Request.
+Contributions are welcome! Please see our [Contributing Guidelines](CONTRIBUTING.md) and [Code of Conduct](CODE_OF_CONDUCT.md) for more details.
+
+## 🛡️ Security
+
+If you discover a security vulnerability, please see our [Security Policy](SECURITY.md).
 
 ## ⚖️ License
 
