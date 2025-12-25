@@ -1,0 +1,259 @@
+/* --- Default Variables --- */
+$divider: #414868;
+
+/* --- Base Layout --- */
+
+Screen {
+    background: $background;
+    color: $foreground;
+    layout: vertical;
+}
+
+/* --- Layout --- */
+
+/* Header */
+#header {
+    dock: top;
+    height: 1;
+    background: $background;
+    color: $primary;
+    text-align: center;
+    text-style: bold;
+    border-bottom: solid $divider;
+}
+
+#main-layout-horizontal {
+    height: 1fr;
+}
+
+/* Sidebar */
+#sidebar {
+    dock: left;
+    width: 30;
+    height: 100%;
+    background: $surface;
+    border-right: solid $divider;
+    transition: margin-left 300ms;
+}
+
+#sidebar.-hidden {
+    margin-left: -30;
+}
+
+.sidebar-header {
+    background: $surface;
+    color: $primary;
+    text-style: bold;
+    padding: 1;
+    text-align: center;
+    border-bottom: solid $divider;
+}
+
+/* Stats Panel */
+StatsPanel {
+    height: auto;
+    padding: 1;
+    background: $surface;
+    border-bottom: solid $divider;
+}
+
+.stat-row {
+    height: 1;
+    margin-bottom: 0;
+}
+
+.stat-label {
+    color: $boost;
+    width: 8;
+}
+
+.stat-value {
+    color: $secondary;
+    text-align: right;
+    width: 1fr;
+}
+
+.success-text {
+    color: $success;
+}
+
+/* File Tree */
+WorkspaceTree {
+    width: 100%;
+    height: 1fr;
+    background: $surface;
+    padding: 1;
+}
+
+DirectoryTree {
+    background: $surface;
+    border: none;
+}
+
+DirectoryTree:focus {
+    border: none;
+    background: $surface;
+}
+
+/* --- Main Content --- */
+
+#main-container {
+    width: 1fr;
+    height: 100%;
+    layout: vertical;
+    background: $background;
+}
+
+/* Chat Area */
+#chat-scroll {
+    width: 1fr;
+    height: 1fr;
+    padding: 1 2;
+    scrollbar-color: $primary;
+    scrollbar-size: 1 1;
+}
+
+.welcome-msg {
+    text-align: center;
+    color: $boost;
+    margin-top: 4;
+}
+
+/* Message Bubbles */
+MessageBubble {
+    height: auto;
+    margin-bottom: 2;
+    padding: 0;
+}
+
+.message-header {
+    height: 1;
+    margin-bottom: 0;
+    padding-left: 1;
+}
+
+.message-author {
+    text-style: bold;
+}
+
+.role-user {
+    color: $primary;
+}
+
+.role-model {
+    color: $secondary;
+}
+
+.role-system {
+    color: $warning;
+}
+
+MessageContent {
+    background: $background;
+    color: $foreground;
+    padding-left: 1;
+    border-left: solid $divider;
+    margin-left: 0;
+}
+
+/* Input Area */
+#input-container {
+    height: auto;
+    padding: 1;
+    background: $background;
+    border-top: solid $divider;
+}
+
+Input {
+    background: $panel;
+    border: none;
+    color: $foreground;
+    padding: 0 1;
+}
+
+Input:focus {
+    border: solid $primary;
+}
+
+/* Tool Status Overlay */
+ToolStatus {
+    dock: top;
+    height: 1;
+    width: 100%;
+    background: $primary;
+    color: $background;
+    text-align: center;
+    text-style: bold;
+    display: none;
+}
+
+/* Settings Modal */
+SettingsScreen {
+    align: center middle;
+    background: rgba(0,0,0,0.6);
+}
+
+#settings-dialog {
+    width: 60;
+    height: auto;
+    background: $surface;
+    border: solid $primary;
+    padding: 1 2;
+}
+
+.section-title {
+    color: $primary;
+    text-style: bold;
+    margin-top: 1;
+    margin-bottom: 1;
+    text-align: center;
+}
+
+Button {
+    width: 100%;
+    margin-top: 1;
+    background: $primary;
+    color: $background;
+    border: none;
+}
+
+Button:hover {
+    background: $secondary;
+}
+
+/* Confirmation Modal */
+ConfirmToolCall {
+    align: center middle;
+    background: rgba(0,0,0,0.6);
+}
+
+#confirm-modal {
+    width: 60;
+    height: auto;
+    background: $surface;
+    border: solid $warning;
+    padding: 1 2;
+}
+
+#confirm-args {
+    background: $panel;
+    padding: 1;
+    margin-top: 1;
+    color: $foreground;
+}
+
+#confirm-buttons {
+    margin-top: 1;
+    height: 3;
+}
+
+#confirm-btn {
+    width: 1fr;
+    background: $success;
+    margin-right: 1;
+}
+
+#cancel-btn {
+    width: 1fr;
+    background: $error;
+}

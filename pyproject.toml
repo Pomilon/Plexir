@@ -1,0 +1,39 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "plexir"
+version = "1.0.0"
+authors = [
+  { name = "Pomilon", email = "pomilon@example.com" },
+]
+description = "A modular, secure, and beautiful AI-powered terminal workspace."
+readme = "README.md"
+requires-python = ">=3.10"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+]
+dependencies = [
+    "textual>=0.70.0",
+    "rich>=13.7.0",
+    "pydantic>=2.7.0",
+    "pydantic-settings>=2.2.0",
+    "python-dotenv>=1.0.0",
+    "google-generativeai>=0.8.0",
+    "groq>=0.5.0",
+    "openai>=1.0.0",
+    "docker>=7.0.0",
+    "mcp>=1.0.0",
+    "requests>=2.31.0",
+    "beautifulsoup4>=4.12.0",
+]
+
+[project.scripts]
+plexir = "plexir.app:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["plexir*"]

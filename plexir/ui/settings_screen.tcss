@@ -1,0 +1,153 @@
+/* --- Default Variables --- */
+$divider: #414868;
+
+/* Settings Screen CSS */
+
+SettingsScreen {
+    align: center middle;
+    background: rgba(0,0,0,0.6);
+}
+
+#settings-dialog {
+    width: 80%;
+    height: 80%;
+    max-width: 100;
+    max-height: 40;
+    background: $surface;
+    border: thick $primary;
+    padding: 1;
+    layout: vertical;
+}
+
+#settings-dialog Header {
+    background: $primary;
+    color: $background;
+    text-align: center;
+    text-style: bold;
+    height: 1;
+    dock: top;
+}
+
+#settings-dialog Footer {
+    height: auto;
+    dock: bottom;
+    padding: 0;
+}
+
+#settings-dialog .section-title {
+    color: $primary;
+    text-style: bold;
+    margin-top: 1;
+    margin-bottom: 1;
+    text-align: center;
+    border-bottom: double $divider;
+}
+
+#settings-content {
+    width: 1fr;
+    height: 1fr;
+    layout: horizontal;
+}
+
+#provider-list-panel {
+    width: 30%;
+    height: 1fr;
+    border-right: solid $divider;
+    padding-right: 1;
+    layout: vertical;
+}
+
+#provider-list {
+    width: 1fr;
+    height: 1fr;
+    background: $panel;
+    border: solid $divider;
+    margin-bottom: 1;
+}
+
+#provider-actions {
+    width: 100%;
+    height: auto;
+    grid-size: 5;
+    grid-columns: 1fr 1fr 1fr 1fr 1fr;
+    grid-gutter: 1;
+}
+
+#provider-actions Button {
+    width: auto;
+    margin: 0;
+    padding: 0 1;
+}
+
+#provider-detail-panel {
+    width: 1fr;
+    height: 1fr;
+    padding-left: 1;
+    layout: vertical;
+}
+
+#provider-detail-panel .input-label {
+    color: $boost;
+    margin-top: 1;
+}
+
+#provider-detail-panel Input, Select {
+    background: $panel;
+    border: solid $divider;
+    margin-bottom: 1;
+    color: $foreground;
+}
+
+#provider-detail-panel Select {
+    min-height: 1; 
+}
+
+#provider-detail-panel Button {
+    margin-top: 1;
+}
+
+#app-settings {
+    width: 1fr;
+    height: auto;
+    border-top: solid $divider;
+    padding-top: 1;
+    grid-size: 2;
+    grid-columns: 1fr 1fr;
+    grid-rows: auto;
+    grid-gutter: 1;
+}
+
+#app-settings Label {
+    margin-top: 1;
+}
+
+#app-settings Select {
+    background: $panel;
+    border: solid $divider;
+    color: $foreground;
+}
+
+.radio-set-horizontal {
+    layout: horizontal;
+}
+
+.radio-set-horizontal RadioButton {
+    margin-right: 2;
+}
+
+
+#settings-footer {
+    dock: bottom;
+    width: 100%;
+    height: auto;
+    grid-size: 2;
+    grid-columns: 1fr 1fr;
+    grid-gutter: 1;
+    border-top: solid $divider;
+    padding-top: 1;
+    margin-top: 1;
+}
+
+#settings-footer Button {
+    margin-top: 0;
+}
