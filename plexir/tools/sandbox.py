@@ -5,6 +5,7 @@ Includes a one-off tool and a persistent "own computer" environment.
 
 import asyncio
 import logging
+import os
 from typing import List, Optional
 import docker
 from docker.errors import ImageNotFound, ContainerError, APIError
@@ -84,8 +85,9 @@ class PersistentSandbox:
     """
     CONTAINER_NAME = "plexir-persistent-sandbox"
 
-    def __init__(self, image: str = "python:3.10-slim"):
+    def __init__(self, image: str = "python:3.10-slim", mount_path: str = None):
         self.image = image
+        self.mount_path = mount_path or os.getcwd()
         self.container = None
         self.client = None
         try:
@@ -95,34 +97,43 @@ class PersistentSandbox:
             logger.error("Docker not available for PersistentSandbox.")
 
     async def start(self):
-        """Starts or restarts the named persistent sandbox container."""
+        """Starts the persistent sandbox container with volume mounts."""
         if not self.client:
             return
         try:
+            # We enforce a fresh container start to ensure the current directory is mounted correctly.
+            # "Persistent" here refers to persistence WITHIN the session/lifetime of the app, 
+            # and potentially across restarts if we didn't force-recreate, but we need correct mounts.
             try:
-                self.container = await asyncio.to_thread(
-                    self.client.containers.get, self.CONTAINER_NAME
-                )
-                if self.container.status != "running":
-                    logger.info("Restarting existing sandbox...")
-                    await asyncio.to_thread(self.container.start)
+                old = await asyncio.to_thread(self.client.containers.get, self.CONTAINER_NAME)
+                if old.status == "running":
+                    logger.info("Stopping existing sandbox to update mounts...")
+                    await asyncio.to_thread(old.stop)
+                await asyncio.to_thread(old.remove)
             except docker.errors.NotFound:
-                logger.info(f"Creating new sandbox: {self.CONTAINER_NAME}")
-                self.container = await asyncio.to_thread(
-                    self.client.containers.run,
-                    self.image,
-                    command="sleep infinity",
-                    name=self.CONTAINER_NAME,
-                    detach=True,
-                    mem_limit="512m",
-                    network_mode="bridge" 
-                )
+                pass
             
-            # Ensure git is present
+            logger.info(f"Creating sandbox: {self.CONTAINER_NAME} (Mounting {self.mount_path} -> /workspace)")
+            
+            self.container = await asyncio.to_thread(
+                self.client.containers.run,
+                self.image,
+                command="sleep infinity",
+                name=self.CONTAINER_NAME,
+                detach=True,
+                mem_limit="1024m",
+                network_mode="bridge",
+                volumes={self.mount_path: {'bind': '/workspace', 'mode': 'rw'}},
+                working_dir="/workspace"
+            )
+            
+            # Ensure git and basic tools are present
+            # We check first to avoid apt-get update delay if image has them (unlikely for slim)
             git_check = await self.exec("git --version")
             if "not found" in git_check or "Error" in git_check:
-                logger.info("Installing git in sandbox...")
-                await self.exec("apt-get update && apt-get install -y git")
+                logger.info("Installing git/tools in sandbox...")
+                # Install git and procps (for ps)
+                await self.exec("apt-get update && apt-get install -y git procps")
             
         except Exception as e:
             logger.error(f"Sandbox start failed: {e}")
@@ -135,7 +146,7 @@ class PersistentSandbox:
             exec_res = await asyncio.to_thread(
                 self.container.exec_run,
                 ["/bin/sh", "-c", cmd],
-                workdir="/"
+                workdir="/workspace"
             )
             return exec_res.output.decode("utf-8")
         except Exception as e:

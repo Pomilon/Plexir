@@ -10,12 +10,12 @@ import time
 from typing import List, Dict, Any, Optional
 
 from textual.app import App, ComposeResult
-from textual.widgets import Input, Label, Static, Footer
+from textual.widgets import Input, Label, Static, Footer, DirectoryTree
 from textual.containers import VerticalScroll
 from textual.theme import Theme
 from textual import work
 
-from plexir.ui.widgets import MessageContent, ToolStatus, StatsPanel, MessageBubble
+from plexir.ui.widgets import MessageContent, ToolStatus, StatsPanel, MessageBubble, ToolOutput
 from plexir.ui.app_layout import compose_main_layout
 from plexir.ui.screens import ConfirmToolCall
 from plexir.core.router import Router, RouterEvent
@@ -85,9 +85,8 @@ class PlexirApp(App):
     BINDINGS = [
         ("ctrl+r", "reload_providers", "Reload Providers"),
         ("ctrl+b", "toggle_sidebar", "Toggle Sidebar"),
-        ("ctrl+p", "command_palette", "Commands"),
         ("ctrl+y", "copy_last_response", "Copy AI"),
-        ("ctrl+c", "quit", "Quit"),
+        ("ctrl+c", "interrupt_or_quit", "Stop/Quit"),
         ("ctrl+f", "focus_input", "Focus Input"),
     ]
 
@@ -101,6 +100,7 @@ class PlexirApp(App):
         self.session_manager = SessionManager()
         self.command_processor = CommandProcessor(self, self.session_manager)
         self.history: List[Dict[str, Any]] = []
+        self.generation_worker = None
         
         # Macro state
         self.is_recording_macro = False
@@ -142,6 +142,17 @@ class PlexirApp(App):
         sidebar = self.query_one("#sidebar")
         sidebar.toggle_class("-hidden")
         self.query_one("#user-input", Input).focus()
+
+    def action_interrupt_or_quit(self):
+        """Interrupts current generation or quits the app."""
+        if self.generation_worker and self.generation_worker.is_running:
+            self.generation_worker.cancel()
+            self.notify("Interrupted generation.", severity="warning")
+            # Reset UI status
+            self.query_one("#tool-status", ToolStatus).set_status("Interrupted", running=False)
+            self.query_one("#stats-panel", StatsPanel).status = "Idle"
+        else:
+            self.action_quit()
 
     async def action_quit(self):
         """Cleanly exits the application, stopping any background sandboxes."""
@@ -231,7 +242,7 @@ class PlexirApp(App):
         self._add_message("user", user_text)
 
         # 3. Trigger AI response
-        self.generate_response()
+        self.generation_worker = self.generate_response()
 
     # --- Macro Support ---
 
@@ -317,32 +328,37 @@ class PlexirApp(App):
         tool_status = self.query_one("#tool-status", ToolStatus)
         chat_scroll = self.query_one("#chat-scroll", VerticalScroll)
         
+        # Start a new bubble for this generation session
         model_bubble = MessageBubble(role="model")
         await chat_scroll.mount(model_bubble)
-        model_content_widget = model_bubble.query_one(MessageContent)
+        
+        current_text_widget = model_bubble.query_one(MessageContent)
+        current_text_buffer = ""
+        
+        # Optimization: Dynamic Throttling
+        last_update_time = 0
+        
+        # Base interval
+        base_interval = 0.05 
 
         start_time = time.monotonic()
         stats.status = "Generating"
         stats.latency = 0.0
         tool_status.set_status("Thinking...", running=True)
         
-        full_response = ""
-        
         try:
             if not self.router.providers:
-                # Try reloading once in case they were never loaded
                 await self.router.reload_providers()
                 
             if not self.router.providers:
                 stats.model_name = "None"
                 tool_status.set_status("No active provider.", running=False)
-                model_content_widget.update(
+                current_text_widget.update(
                     "[ERROR] No LLM providers configured or available.\n\n"
                     "Please check your API keys and provider settings using `/config list`."
                 )
                 return
                 
-            # Ensure index is safe
             if self.router.active_provider_index >= len(self.router.providers):
                 self.router.active_provider_index = 0
                 
@@ -350,12 +366,11 @@ class PlexirApp(App):
             stats.model_name = active_provider.name
         except Exception as e:
             logger.error(f"Initialization error in generate_response: {e}")
-            model_content_widget.update(f"[ERROR] Failed to initialize providers: {e}")
+            current_text_widget.update(f"[ERROR] Failed to initialize providers: {e}")
             return
 
         try:
             while True:
-                response_content = ""
                 tool_called = False
                 
                 async for chunk in self.router.route(self.history):
@@ -375,38 +390,47 @@ class PlexirApp(App):
                         continue
                     
                     if isinstance(chunk, dict) and chunk.get("type") == "tool_call":
+                        if current_text_buffer.strip():
+                            current_text_widget.update(current_text_buffer)
+                            self.history.append({"role": "model", "content": current_text_buffer})
+                            current_text_buffer = "" 
+
                         tool_name = chunk["name"]
                         args = chunk["args"]
                         tool_id = chunk.get("id", f"call_{int(time.time())}")
                         
-                        full_response += f"\n\n> 🛠️ **Executing:** `{tool_name}` with args: `{args}`\n"
-                        model_content_widget.update(full_response)
-
-                        # Handle Critical Actions (HITL)
                         tool_instance = self.router.get_tool(tool_name)
                         if tool_instance and tool_instance.is_critical:
                             tool_status.set_status(f"WAITING FOR CONFIRMATION: {tool_name}", running=False)
-                            confirmed = await self.push_screen_wait(ConfirmToolCall(tool_name, args))
-                            if not confirmed:
-                                result = "Action cancelled by user."
-                                tool_status.set_status("Cancelled", running=False)
-                            else:
+                            # ConfirmToolCall returns: "confirm", "skip", "stop"
+                            action = await self.push_screen_wait(ConfirmToolCall(tool_name, args))
+                            
+                            if action == "stop":
+                                tool_status.set_status("Stopped", running=False)
+                                current_text_widget.update(current_text_buffer + "\n\n[Stopped by User]")
+                                stats.status = "Idle"
+                                return # Exit generation loop
+                            
+                            elif action == "skip":
+                                result = "Action skipped by user."
+                                tool_status.set_status("Skipped", running=False)
+                            
+                            else: # "confirm"
                                 tool_status.set_status(f"EXECUTING: {tool_name}", running=True)
                                 result = await self.router.providers[self.router.active_provider_index].execute_tool(tool_name, args)
                         else:
                             tool_status.set_status(f"EXECUTING: {tool_name}", running=True)
                             result = await self.router.providers[self.router.active_provider_index].execute_tool(tool_name, args)
                         
-                        # Display result
-                        result_display = str(result)
-                        if len(result_display) > 500:
-                            result_display = result_display[:500] + "\n... (truncated)"
-                            
-                        full_response += f"```text\n{result_display}\n```\n\n"
-                        model_content_widget.update(full_response)
+                        try:
+                            self.query_one("#file-tree", DirectoryTree).reload()
+                        except Exception:
+                            pass 
+
+                        tool_widget = ToolOutput(tool_name, str(args), str(result))
+                        await model_bubble.mount(tool_widget)
                         tool_status.set_status("Ready", running=False)
                         
-                        # Update history with call and result (including tool_id for OpenAI compatibility)
                         self.history.append({
                             "role": "model", 
                             "parts": [{"function_call": {"name": tool_name, "args": args, "id": tool_id}}]
@@ -416,26 +440,50 @@ class PlexirApp(App):
                             "parts": [{"function_response": {"name": tool_name, "response": {"result": result}, "id": tool_id}}]
                         })
                         
+                        current_text_widget = MessageContent("")
+                        await model_bubble.mount(current_text_widget)
+                        last_update_time = 0 # Reset throttling for new widget
+                        
                         tool_called = True
                         break 
                     
                     if isinstance(chunk, str):
-                        response_content += chunk
-                        model_content_widget.update(full_response + response_content)
-                        chat_scroll.scroll_end(animate=False)
+                        current_text_buffer += chunk
+                        
+                        now = time.monotonic()
+                        
+                        # Dynamic Throttling (Tweaked for better performance):
+                        buf_len = len(current_text_buffer)
+                        if buf_len < 1000: update_interval = 0.1
+                        elif buf_len < 3000: update_interval = 0.2
+                        elif buf_len < 8000: update_interval = 0.5
+                        else: update_interval = 1.0
+                        
+                        if now - last_update_time > update_interval:
+                            dist_from_bottom = chat_scroll.max_scroll_y - chat_scroll.scroll_y
+                            should_scroll = dist_from_bottom <= 2 or last_update_time == 0
+                            
+                            current_text_widget.update(current_text_buffer)
+                            
+                            if should_scroll:
+                                # Scroll the WIDGET into view, which is more reliable for "pushing up"
+                                self.call_after_refresh(current_text_widget.scroll_visible, animate=False, top=False)
+                                
+                            last_update_time = now
 
                 if not tool_called:
-                    full_response += response_content 
+                    current_text_widget.update(current_text_buffer)
+                    # Final scroll to ensure bottom is visible
+                    self.call_after_refresh(current_text_widget.scroll_visible, animate=False, top=False)
+                    if current_text_buffer.strip():
+                        self.history.append({"role": "model", "content": current_text_buffer})
                     break
 
-            if full_response.strip():
-                self.history.append({"role": "model", "content": full_response})
             tool_status.set_status("Ready", running=False)
             stats.status = "Idle"
             
         except Exception as e:
-            full_response += f"\n\n[ERROR]: {str(e)}"
-            model_content_widget.update(full_response)
+            current_text_widget.update(f"\n\n[ERROR]: {str(e)}")
             tool_status.set_status("Error", running=False)
             stats.status = "Error"
 

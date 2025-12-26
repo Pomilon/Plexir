@@ -8,9 +8,14 @@ import asyncio
 import logging
 import os
 import subprocess
+import base64
+import shlex
 from typing import List, Any
 from pydantic import BaseModel, Field
 from plexir.tools.base import Tool
+from plexir.core.rag import CodebaseRetriever
+from plexir.core.config_manager import config_manager
+from plexir.core.github import GitHubClient
 
 logger = logging.getLogger(__name__)
 
@@ -326,10 +331,296 @@ class GitCommitTool(Tool):
 
     async def run(self, message: str) -> str:
         if self.sandbox:
-            safe_msg = message.replace("'", "'\\''")
-            return await self.sandbox.exec(f"git commit -m '{safe_msg}'")
+            safe_msg = shlex.quote(message)
+            return await self.sandbox.exec(f"git commit -m {safe_msg}")
         try:
             await asyncio.to_thread(subprocess.run, ["git", "commit", "-m", message], check=True)
             return f"Committed with message: {message}"
         except Exception as e:
             return f"Error during git commit: {e}"
+
+class GitCheckoutSchema(BaseModel):
+    target: str = Field(..., description="Branch name, tag, or commit hash to checkout.")
+    create_new: bool = Field(False, description="If True, create a new branch (-b).")
+
+class GitCheckoutTool(Tool):
+    """Switch branches or restore working tree files."""
+    name = "git_checkout"
+    description = "Switch branches or restore working tree files."
+    args_schema = GitCheckoutSchema
+    is_critical = True
+
+    async def run(self, target: str, create_new: bool = False) -> str:
+        cmd_list = ["git", "checkout"]
+        if create_new:
+            cmd_list.append("-b")
+        cmd_list.append(target)
+        
+        if self.sandbox:
+            # Construct safe shell command
+            cmd_str = " ".join(shlex.quote(arg) for arg in cmd_list)
+            return await self.sandbox.exec(cmd_str)
+        try:
+            await asyncio.to_thread(subprocess.run, cmd_list, check=True, capture_output=True, text=True)
+            return f"Checked out '{target}' (create_new={create_new})."
+        except subprocess.CalledProcessError as e:
+            return f"Error during git checkout: {e.stderr}"
+        except Exception as e:
+            return f"Unexpected error during git checkout: {e}"
+
+class GitBranchSchema(BaseModel):
+    action: str = Field(..., description="Action to perform: 'list', 'create', 'delete'.")
+    branch_name: str = Field(None, description="Name of the branch (required for create/delete).")
+
+class GitBranchTool(Tool):
+    """List, create, or delete branches."""
+    name = "git_branch"
+    description = "Manage git branches."
+    args_schema = GitBranchSchema
+
+    async def run(self, action: str, branch_name: str = None) -> str:
+        if action == "list":
+            if self.sandbox:
+                return await self.sandbox.exec("git branch -a")
+            try:
+                result = await asyncio.to_thread(subprocess.run, ["git", "branch", "-a"], capture_output=True, text=True)
+                return result.stdout
+            except Exception as e:
+                return f"Error listing branches: {e}"
+        
+        elif action == "create":
+            if not branch_name: return "Error: branch_name required for 'create'."
+            if self.sandbox:
+                return await self.sandbox.exec(f"git branch {shlex.quote(branch_name)}")
+            try:
+                await asyncio.to_thread(subprocess.run, ["git", "branch", branch_name], check=True)
+                return f"Branch '{branch_name}' created."
+            except Exception as e:
+                return f"Error creating branch: {e}"
+                
+        elif action == "delete":
+            if not branch_name: return "Error: branch_name required for 'delete'."
+            if self.sandbox:
+                return await self.sandbox.exec(f"git branch -D {shlex.quote(branch_name)}")
+            try:
+                await asyncio.to_thread(subprocess.run, ["git", "branch", "-D", branch_name], check=True)
+                return f"Branch '{branch_name}' deleted."
+            except Exception as e:
+                return f"Error deleting branch: {e}"
+        
+        return f"Unknown action: {action}"
+
+class CodebaseSearchSchema(BaseModel):
+    query: str = Field(..., description="Natural language query or keywords to search for.")
+    root_dir: str = Field(".", description="Root directory to search in.")
+
+class CodebaseSearchTool(Tool):
+    """Semantic-like search for code snippets."""
+    name = "codebase_search"
+    description = "Searches the codebase for relevant snippets using keywords from a query."
+    args_schema = CodebaseSearchSchema
+
+    async def run(self, query: str, root_dir: str = ".") -> str:
+        if self.sandbox:
+            # Simple fallback for sandbox: use grep directly since we can't easily inject the python logic
+            keywords = query.split() # Naive split
+            pattern = "|".join(keywords)
+            return await self.sandbox.exec(f"grep -rnE '{pattern}' '{root_dir}' | head -n 20")
+
+        try:
+            return await asyncio.to_thread(CodebaseRetriever.search_codebase, query, root_dir)
+        except Exception as e:
+            return f"Error during search: {e}"
+
+class GetDefinitionsSchema(BaseModel):
+    file_path: str = Field(..., description="Path to the python file.")
+
+class GetDefinitionsTool(Tool):
+    """Extracts class and function definitions from a file."""
+    name = "get_definitions"
+    description = "Returns a summary of classes and functions in a Python file. Cheaper than read_file."
+    args_schema = GetDefinitionsSchema
+
+    async def run(self, file_path: str) -> str:
+        if self.sandbox:
+            # Use AST in sandbox via base64 encoded script to avoid quoting issues
+            py_code = """
+import ast
+import sys
+try:
+    with open(sys.argv[1], 'r', encoding='utf-8') as f:
+        tree = ast.parse(f.read())
+    definitions = []
+    for node in tree.body:
+        if isinstance(node, ast.ClassDef):
+            methods = [n.name for n in node.body if isinstance(n, ast.FunctionDef)]
+            definitions.append(f"Class: {node.name} (Methods: {', '.join(methods)})")
+        elif isinstance(node, ast.FunctionDef):
+            definitions.append(f"Function: {node.name}")
+        elif isinstance(node, ast.AsyncFunctionDef):
+            definitions.append(f"Async Function: {node.name}")
+    if not definitions:
+        print("No classes or functions found.")
+    else:
+        print("\\n".join(definitions))
+except Exception as e:
+    print(f"Error parsing file: {e}")
+"""
+            b64_code = base64.b64encode(py_code.encode()).decode()
+            # Decode and pipe to python3 -, passing file_path as argument
+            cmd = f"echo {b64_code} | base64 -d | python3 - {shlex.quote(file_path)}"
+            return await self.sandbox.exec(cmd)
+
+        try:
+            return await asyncio.to_thread(CodebaseRetriever.get_file_definitions, file_path)
+        except Exception as e:
+            return f"Error getting definitions: {e}"
+
+class ScratchpadSchema(BaseModel):
+    action: str = Field(..., description="Action: 'read', 'append', 'clear'.")
+    content: str = Field(None, description="Content to append (required for 'append').")
+
+class ScratchpadTool(Tool):
+    """Persistent scratchpad for the agent to store plans and notes."""
+    name = "scratchpad"
+    description = "Use this to store plans, notes, or findings that you need to remember for later steps."
+    args_schema = ScratchpadSchema
+
+    def __init__(self):
+        self.file_path = os.path.expanduser("~/.plexir/scratchpad.md")
+    
+    async def run(self, action: str, content: str = None) -> str:
+        # Note: Scratchpad is always on the host, even if sandboxed, 
+        # because it's the AGENT'S memory, not the project's.
+        
+        if action == "read":
+            if not os.path.exists(self.file_path):
+                return "(Scratchpad is empty)"
+            try:
+                with open(self.file_path, "r", encoding="utf-8") as f:
+                    return f.read()
+            except Exception as e:
+                return f"Error reading scratchpad: {e}"
+        
+        elif action == "append":
+            if not content: return "Error: content required for append."
+            try:
+                os.makedirs(os.path.dirname(self.file_path), exist_ok=True)
+                with open(self.file_path, "a", encoding="utf-8") as f:
+                    f.write(f"\n- {content}")
+                return "Note appended to scratchpad."
+            except Exception as e:
+                return f"Error appending to scratchpad: {e}"
+                
+        elif action == "clear":
+            try:
+                if os.path.exists(self.file_path):
+                    os.remove(self.file_path)
+                return "Scratchpad cleared."
+            except Exception as e:
+                return f"Error clearing scratchpad: {e}"
+        
+        return f"Unknown action: {action}"
+
+class GitRemoteSchema(BaseModel):
+    remote: str = Field("origin", description="Remote name (default: origin).")
+    branch: str = Field(None, description="Branch name (default: current).")
+
+class GitPushTool(Tool):
+    """Pushes changes to a remote repository."""
+    name = "git_push"
+    description = "Push changes to remote. Uses configured token if available."
+    args_schema = GitRemoteSchema
+    is_critical = True
+
+    async def run(self, remote: str = "origin", branch: str = None) -> str:
+        cmd = ["git", "push", remote]
+        if branch:
+            cmd.append(branch)
+            
+        token = config_manager.get_tool_config("git", "token")
+        if token:
+            # Inject Basic Auth header for HTTPS remotes
+            # Username: x-access-token (common for GitHub PATs), Password: token
+            auth_str = f"x-access-token:{token}"
+            b64_auth = base64.b64encode(auth_str.encode()).decode()
+            cmd.insert(1, "-c")
+            cmd.insert(2, f"http.extraHeader=Authorization: Basic {b64_auth}")
+
+        if self.sandbox:
+             # Basic quoting for sandbox shell
+             safe_cmd = " ".join(shlex.quote(c) for c in cmd)
+             return await self.sandbox.exec(safe_cmd)
+
+        try:
+            # We don't print the command to logs to avoid leaking token
+            res = await asyncio.to_thread(subprocess.run, cmd, capture_output=True, text=True)
+            if res.returncode == 0:
+                return f"Push successful:\n{res.stdout}"
+            return f"Push failed:\n{res.stderr}"
+        except Exception as e:
+            return f"Error pushing: {e}"
+
+class GitPullTool(Tool):
+    """Pulls changes from a remote repository."""
+    name = "git_pull"
+    description = "Pull changes from remote."
+    args_schema = GitRemoteSchema
+
+    async def run(self, remote: str = "origin", branch: str = None) -> str:
+        cmd = ["git", "pull", remote]
+        if branch:
+            cmd.append(branch)
+            
+        token = config_manager.get_tool_config("git", "token")
+        if token:
+            auth_str = f"x-access-token:{token}"
+            b64_auth = base64.b64encode(auth_str.encode()).decode()
+            cmd.insert(1, "-c")
+            cmd.insert(2, f"http.extraHeader=Authorization: Basic {b64_auth}")
+
+        if self.sandbox:
+             safe_cmd = " ".join(shlex.quote(c) for c in cmd)
+             return await self.sandbox.exec(safe_cmd)
+
+        try:
+            res = await asyncio.to_thread(subprocess.run, cmd, capture_output=True, text=True)
+            if res.returncode == 0:
+                return f"Pull successful:\n{res.stdout}"
+            return f"Pull failed:\n{res.stderr}"
+        except Exception as e:
+            return f"Error pulling: {e}"
+
+class GitHubIssueSchema(BaseModel):
+    repo: str = Field(..., description="Repository name in format 'owner/repo'.")
+    title: str = Field(..., description="Issue title.")
+    body: str = Field(..., description="Issue description.")
+    labels: List[str] = Field(default=[], description="List of labels.")
+
+class GitHubCreateIssueTool(Tool):
+    """Creates a GitHub Issue."""
+    name = "github_create_issue"
+    description = "Creates an issue in a specified GitHub repository."
+    args_schema = GitHubIssueSchema
+    is_critical = True
+
+    async def run(self, repo: str, title: str, body: str, labels: List[str] = None) -> str:
+        # Run on host to use configured client
+        return await asyncio.to_thread(GitHubClient.create_issue, repo, title, body, labels)
+
+class GitHubPRSchema(BaseModel):
+    repo: str = Field(..., description="Repository name 'owner/repo'.")
+    title: str = Field(..., description="PR title.")
+    body: str = Field(..., description="PR description.")
+    head: str = Field(..., description="The branch with your changes.")
+    base: str = Field("main", description="The branch to merge into.")
+
+class GitHubCreatePRTool(Tool):
+    """Creates a GitHub Pull Request."""
+    name = "github_create_pr"
+    description = "Creates a Pull Request in a specified GitHub repository."
+    args_schema = GitHubPRSchema
+    is_critical = True
+
+    async def run(self, repo: str, title: str, body: str, head: str, base: str = "main") -> str:
+        return await asyncio.to_thread(GitHubClient.create_pull_request, repo, title, body, head, base)

@@ -6,7 +6,7 @@ Includes MessageBubbles, StatsPanel, and WorkspaceTree.
 from textual.app import ComposeResult
 from textual.containers import Container, Horizontal
 from textual.reactive import reactive
-from textual.widgets import Static, Label, Markdown as MarkdownWidget, DirectoryTree
+from textual.widgets import Static, Label, Markdown as MarkdownWidget, DirectoryTree, Collapsible
 
 class MessageContent(MarkdownWidget):
     """Widget to display message content with Markdown support."""
@@ -103,3 +103,28 @@ class WorkspaceTree(Container):
         """Composes the workspace tree layout."""
         yield Label("WORKSPACE", classes="sidebar-header")
         yield DirectoryTree("./", id="file-tree")
+
+class ToolOutput(Container):
+    """Widget to display tool execution details and output (Always visible)."""
+    def __init__(self, tool_name: str, args: str, result: str):
+        super().__init__()
+        self.tool_name = tool_name
+        self.args_str = args
+        self.result_str = result
+        self.add_class("tool-output")
+
+    def compose(self) -> ComposeResult:
+        # Title/Header
+        yield Label(f"🛠️ {self.tool_name}", classes="tool-header")
+        
+        # Args
+        safe_args = str(self.args_str)
+        if len(safe_args) > 80: safe_args = safe_args[:80] + "..."
+        yield Label(f"Args: {safe_args}", classes="tool-args")
+        
+        # Result
+        result_str = str(self.result_str)
+        if len(result_str) > 2000:
+             result_str = result_str[:2000] + "\n... (truncated)"
+             
+        yield MarkdownWidget(f"```text\n{result_str}\n```", classes="tool-result")

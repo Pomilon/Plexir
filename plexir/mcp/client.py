@@ -1,168 +1,273 @@
+"""
+Standard MCP (Model Context Protocol) Client for Plexir.
+Implements JSON-RPC 2.0 communication over stdio.
+"""
+
 import asyncio
 import json
 import logging
 import os
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Union
 from subprocess import SubprocessError
 
 from plexir.core.config_manager import config_manager, ProviderConfig
 from plexir.tools.base import Tool, ToolRegistry
-from pydantic import BaseModel, Field, ValidationError # Specific Pydantic exception
+from pydantic import BaseModel, Field, ValidationError
 
 logger = logging.getLogger(__name__)
 
-# Basic MCP tool schema for communication
-class MCPToolRequest(BaseModel):
-    tool_name: str
-    args: Dict[str, Any]
-
-class MCPToolResponse(BaseModel):
-    result: str
-    error: Optional[str] = None
+class JSONRPCError(Exception):
+    def __init__(self, code: int, message: str, data: Any = None):
+        self.code = code
+        self.message = message
+        self.data = data
+        super().__init__(f"JSON-RPC Error {code}: {message} - {data}")
 
 class MCPClient:
     """
-    A basic client for connecting to a Model Context Protocol (MCP) server.
-    This version focuses on stdio communication for simplicity.
+    A robust JSON-RPC 2.0 client for the Model Context Protocol.
+    Supports stdio transport, lifecycle management, and tool registration.
     """
     def __init__(self, config: ProviderConfig, tool_registry: ToolRegistry):
         self.config = config
         self.tool_registry = tool_registry
-        self.process = None # To hold the subprocess
+        self.process = None
         self.running = False
-        logger.info(f"MCP Client initialized for {config.name} ({config.base_url or 'stdio'}).")
+        self._request_id = 0
+        self._pending_requests: Dict[int, asyncio.Future] = {}
+        self._read_task = None
+        self._stderr_task = None
+        logger.info(f"MCP Client initialized for {config.name}.")
 
     async def connect(self):
-        """Establishes connection to the MCP server (e.g., starts subprocess)."""
+        """Establishes connection and performs MCP handshake."""
         if not self.config.base_url or not self.config.base_url.startswith("stdio://"):
-            logger.warning(f"MCP Client {self.config.name} has no stdio base_url. Not connecting.")
+            logger.warning(f"MCP Client {self.config.name}: Invalid/Missing stdio URL.")
             return
 
         command_str = self.config.base_url[len("stdio://"):]
-        logger.info(f"Connecting to MCP via stdio: {command_str}")
+        logger.info(f"Starting MCP server: {command_str}")
+        
         try:
             self.process = await asyncio.create_subprocess_exec(
-                *command_str.split(), # Assumes command is space-separated
+                *command_str.split(), 
                 stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE
             )
             self.running = True
-            asyncio.create_task(self._read_stderr()) # Start reading stderr in background
-            logger.info(f"MCP Client {self.config.name} connected via stdio.")
+            self._read_task = asyncio.create_task(self._read_loop())
+            self._stderr_task = asyncio.create_task(self._read_stderr())
             
-            # Initial handshake: Request tools (MCP standard)
-            await self._send_command({"command": "list_tools"})
+            # --- MCP Handshake ---
+            # 1. Initialize
+            logger.info(f"MCP {self.config.name}: Sending initialize...")
+            init_result = await self.send_request("initialize", {
+                "protocolVersion": "2024-11-05", 
+                "capabilities": {
+                    "tools": {},
+                    "resources": {} # Future proofing
+                },
+                "clientInfo": {"name": "Plexir", "version": "1.2.0"}
+            })
+            logger.info(f"MCP {self.config.name} Initialized. Server: {init_result.get('serverInfo', 'Unknown')}")
+            
+            # 2. Initialized Notification
+            await self.send_notification("notifications/initialized")
+            
+            # 3. List Tools
+            await self.refresh_tools()
             
         except FileNotFoundError:
-            logger.error(f"MCP Client {self.config.name} failed: Command '{command_str.split()[0]}' not found.")
-            self.running = False
-        except SubprocessError as e:
-            logger.error(f"MCP Client {self.config.name} subprocess error: {e}")
-            self.running = False
+            logger.error(f"MCP Client {self.config.name} failed: Command not found.")
+            await self.disconnect()
         except Exception as e:
-            logger.error(f"Unexpected error connecting MCP Client {self.config.name}: {e}")
-            self.running = False
+            logger.error(f"MCP Connection failed: {e}")
+            await self.disconnect()
+
+    async def refresh_tools(self):
+        """Fetches and registers tools from the server."""
+        try:
+            result = await self.send_request("tools/list")
+            tools = result.get("tools", [])
+            self._register_mcp_tools(tools)
+            logger.info(f"MCP {self.config.name}: Registered {len(tools)} tools.")
+        except Exception as e:
+            logger.error(f"Failed to list tools for {self.config.name}: {e}")
+
+    async def send_request(self, method: str, params: Optional[Dict] = None) -> Any:
+        """Sends a JSON-RPC request and waits for the result."""
+        if not self.running:
+            raise RuntimeError("MCP Client is not connected.")
+
+        self._request_id += 1
+        req_id = self._request_id
+        future = asyncio.Future()
+        self._pending_requests[req_id] = future
+        
+        payload = {
+            "jsonrpc": "2.0",
+            "method": method,
+            "params": params or {},
+            "id": req_id
+        }
+        
+        await self._write_json(payload)
+        
+        # Simple timeout mechanism
+        try:
+            return await asyncio.wait_for(future, timeout=30.0)
+        except asyncio.TimeoutError:
+            del self._pending_requests[req_id]
+            raise TimeoutError(f"MCP Request '{method}' timed out.")
+
+    async def send_notification(self, method: str, params: Optional[Dict] = None):
+        """Sends a JSON-RPC notification (no ID, no response expected)."""
+        if not self.running: return
+        payload = {
+            "jsonrpc": "2.0",
+            "method": method,
+            "params": params or {}
+        }
+        await self._write_json(payload)
+
+    async def _write_json(self, data: Dict):
+        """Writes JSON payload to stdin."""
+        try:
+            json_str = json.dumps(data) + "\n"
+            self.process.stdin.write(json_str.encode())
+            await self.process.stdin.drain()
+        except Exception as e:
+            logger.error(f"Write error {self.config.name}: {e}")
+            raise
+
+    async def _read_loop(self):
+        """Reads stdout, parses JSON-RPC messages, and resolves futures."""
+        buffer = ""
+        while self.running and self.process.stdout:
+            try:
+                line = await self.process.stdout.readline()
+                if not line: break # EOF
+                
+                # Check for debug logs mixed in stdout (common in some servers)
+                line_str = line.decode().strip()
+                if not line_str: continue
+                
+                try:
+                    message = json.loads(line_str)
+                except json.JSONDecodeError:
+                    logger.warning(f"MCP {self.config.name} Non-JSON output: {line_str}")
+                    continue
+
+                if "id" in message:
+                    # It's a response (or request from server, but we act as client)
+                    req_id = message["id"]
+                    if req_id in self._pending_requests:
+                        future = self._pending_requests.pop(req_id)
+                        if "error" in message:
+                            err = message["error"]
+                            future.set_exception(JSONRPCError(err.get("code"), err.get("message"), err.get("data")))
+                        elif "result" in message:
+                            future.set_result(message["result"])
+                        else:
+                            future.set_result(None) # Ack?
+                else:
+                    # Notification or request from server
+                    method = message.get("method")
+                    if method == "ping":
+                        # Auto-reply to ping if server initiates (rare for stdio)
+                        pass
+                    # logger.debug(f"MCP Notification: {method}")
+
+            except Exception as e:
+                logger.error(f"Read loop error {self.config.name}: {e}")
+                break
+        
+        logger.info(f"MCP {self.config.name} read loop ended.")
+        await self.disconnect()
 
     async def _read_stderr(self):
-        """Reads stderr from the subprocess and logs it."""
-        while self.process.stderr and self.running:
+        """Logs stderr from the server process."""
+        while self.running and self.process.stderr:
             line = await self.process.stderr.readline()
             if not line: break
             logger.warning(f"MCP STDERR [{self.config.name}]: {line.decode().strip()}")
 
-    async def _send_command(self, command: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-        """Sends a JSON command to the MCP server via stdin and waits for response."""
-        if not self.running or not self.process.stdin or not self.process.stdout:
-            logger.error(f"MCP Client {self.config.name} not running or pipes not available.")
-            return None
-        
-        try:
-            cmd_json = json.dumps(command) + "\n"
-            self.process.stdin.write(cmd_json.encode())
-            await self.process.stdin.drain()
-            
-            response_line = await self.process.stdout.readline()
-            if not response_line:
-                logger.warning(f"MCP Client {self.config.name} received empty response for {command.get('command')}.")
-                return None
-            
-            response_data = json.loads(response_line.decode())
-            
-            if command.get("command") == "list_tools" and "tools" in response_data:
-                self._register_mcp_tools(response_data["tools"])
-
-            return response_data
-            
-        except json.JSONEncodeError as e:
-            logger.error(f"Error encoding JSON command for MCP Client {self.config.name}: {e}")
-            return {"error": f"Invalid command format: {e}"}
-        except json.JSONDecodeError as e:
-            logger.error(f"Error decoding JSON response from MCP Client {self.config.name}: {e}")
-            return {"error": f"Invalid response format: {e}"}
-        except (BrokenPipeError, ConnectionResetError) as e:
-            logger.error(f"MCP Client {self.config.name} pipe error: {e}. Disconnected.")
-            self.running = False
-            return {"error": "MCP server disconnected."}
-        except asyncio.IncompleteReadError as e:
-            logger.error(f"MCP Client {self.config.name} incomplete read error: {e}. Possibly disconnected.")
-            self.running = False
-            return {"error": "MCP server disconnected unexpectedly."}
-        except Exception as e:
-            logger.error(f"Unexpected error communicating with MCP Client {self.config.name}: {e}")
-            return {"error": f"An unexpected communication error occurred: {e}"}
-
     def _register_mcp_tools(self, tool_definitions: List[Dict[str, Any]]):
-        """Registers tools defined by the MCP server into the global ToolRegistry."""
+        """Dynamically creates Tool classes for MCP tools."""
         for tool_def in tool_definitions:
             try:
-                # Validate essential fields
                 name = tool_def.get("name")
-                description = tool_def.get("description", "MCP-provided tool.")
-                schema = tool_def.get("schema")
+                description = tool_def.get("description", "MCP Tool")
+                input_schema = tool_def.get("inputSchema") # Standard MCP uses inputSchema, not schema
 
-                if not name or not schema:
-                    raise ValueError(f"MCP tool definition missing 'name' or 'schema': {tool_def}")
+                if not name or not input_schema:
+                    logger.warning(f"Skipping invalid MCP tool def: {tool_def}")
+                    continue
 
-                # Dynamically create a Tool class based on MCP definition
-                def make_mcp_tool_instance(client_instance: 'MCPClient', tool_name: str, tool_description: str, tool_schema: Dict[str, Any]):
-                    class GeneratedMCPTool(Tool):
-                        name = tool_name
-                        description = tool_description
-                        args_schema = BaseModel.model_rebuild(__root__=tool_schema)
-                        _mcp_client = client_instance # Store client reference
-                        
-                        async def run(self, **kwargs) -> Any:
-                            response = await self._mcp_client._send_command({
-                                "command": "execute_tool",
-                                "tool_name": self.name,
-                                "args": kwargs
-                            })
-                            if response and "error" in response:
-                                raise RuntimeError(response["error"])
-                            return response.get("result", "(no result)")
-                    return GeneratedMCPTool()
+                # Factory to capture closure
+                def create_tool_class(t_name, t_desc, t_schema, client):
+                    class DynamicMCPTool(Tool):
+                        name = t_name
+                        description = t_desc
+                        # Reconstruct Pydantic model from JSON schema
+                        try:
+                            args_schema = BaseModel.model_rebuild(__root__=t_schema)
+                        except:
+                            # Fallback if complex schema: allow any dict
+                            # Real implementation would need a dynamic model builder
+                            # For now we skip validation if rebuild fails or use a generic Dict
+                            class GenericSchema(BaseModel):
+                                pass 
+                            # We can't easily map arbitrary JSON Schema to Pydantic dynamically 
+                            # without a heavy library like datamodel-code-generator.
+                            # Strategy: Use a generic schema that accepts **kwargs but describe it in prompt.
+                            args_schema = None 
 
-                mcp_tool_instance = make_mcp_tool_instance(self, name, description, schema)
-                self.tool_registry.register(mcp_tool_instance)
-                logger.info(f"Registered MCP Tool: {name} from {self.config.name}")
-            except ValidationError as e:
-                logger.error(f"Pydantic validation error for MCP tool {tool_def.get('name', 'Unknown')}: {e}")
-            except KeyError as e:
-                logger.error(f"Missing key in MCP tool definition {tool_def.get('name', 'Unknown')}: {e}")
+                        async def run(self, **kwargs) -> str:
+                            try:
+                                res = await client.send_request("tools/call", {
+                                    "name": self.name,
+                                    "arguments": kwargs
+                                })
+                                # MCP result structure: { content: [{type: "text", text: "..."}] }
+                                content = res.get("content", [])
+                                text_output = []
+                                for item in content:
+                                    if item.get("type") == "text":
+                                        text_output.append(item.get("text", ""))
+                                    elif item.get("type") == "image":
+                                        text_output.append("[Image returned]")
+                                return "\n".join(text_output)
+                            except Exception as e:
+                                return f"MCP Tool Error: {e}"
+                                
+                    # Hack: since we can't easily build the Pydantic model dynamically, 
+                    # we inject the raw schema into the tool so the Provider can use it directly
+                    # for function calling definitions.
+                    DynamicMCPTool.args_schema_raw = t_schema
+                    return DynamicMCPTool()
+
+                tool_instance = create_tool_class(name, description, input_schema, self)
+                self.tool_registry.register(tool_instance)
+                
             except Exception as e:
-                logger.error(f"Unexpected error registering MCP tool {tool_def.get('name', 'Unknown')}: {e}")
+                logger.error(f"Error registering tool {tool_def.get('name')}: {e}")
 
     async def disconnect(self):
-        """Disconnects the MCP server."""
-        if self.running and self.process:
+        """Cleanly shuts down the MCP connection."""
+        if not self.running: return
+        self.running = False
+        
+        # Cancel pending requests
+        for future in self._pending_requests.values():
+            future.cancel()
+        self._pending_requests.clear()
+
+        if self.process:
             try:
                 self.process.terminate()
                 await self.process.wait()
-            except ProcessLookupError:
-                logger.warning(f"MCP Client {self.config.name} process already terminated.")
-            except Exception as e:
-                logger.error(f"Error terminating MCP Client {self.config.name} process: {e}")
-            finally:
-                self.running = False
-                logger.info(f"MCP Client {self.config.name} disconnected.")
+            except Exception:
+                pass
+        logger.info(f"MCP Client {self.config.name} disconnected.")

@@ -4,9 +4,9 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "plexir"
-version = "1.0.0"
+version = "1.2.0"
 authors = [
-  { name = "Pomilon", email = "pomilon@example.com" },
+  { name = "Pomilon", email = "pomilon@proton.me" },
 ]
 description = "A modular, secure, and beautiful AI-powered terminal workspace."
 readme = "README.md"

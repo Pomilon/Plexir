@@ -7,12 +7,13 @@ from textual.app import ComposeResult
 from textual.widgets import Input, Label, Static, Footer
 from textual.containers import Vertical, Horizontal, VerticalScroll, Container
 from plexir.ui.widgets import ToolStatus, StatsPanel, WorkspaceTree
+from plexir import __version__
 
 def compose_main_layout() -> ComposeResult:
     """Creates the main application layout structure."""
     
     with Container(id="header"):
-        yield Static("Plexir v1.0.0", classes="header-title")
+        yield Static(f"Plexir v{__version__}", classes="header-title")
 
     with Horizontal(id="main-layout-horizontal"):
         # Sidebar section
@@ -29,7 +30,7 @@ def compose_main_layout() -> ComposeResult:
             
             with VerticalScroll(id="chat-scroll"):
                 yield Static(
-                    "INITIALIZING PLEXIR V1.0.0...\nSYSTEM READY.\n\nType `/help` for list of commands.", 
+                    f"INITIALIZING PLEXIR V{__version__}...\nSYSTEM READY.\n\nType `/help` for list of commands.", 
                     classes="welcome-msg"
                 )
             

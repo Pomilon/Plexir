@@ -228,11 +228,13 @@ ConfirmToolCall {
 }
 
 #confirm-modal {
-    width: 60;
+    width: 80%;
     height: auto;
+    max-height: 80%;
     background: $surface;
     border: solid $warning;
     padding: 1 2;
+    overflow-y: auto;
 }
 
 #confirm-args {
@@ -253,7 +255,42 @@ ConfirmToolCall {
     margin-right: 1;
 }
 
-#cancel-btn {
+#skip-btn {
+    width: 1fr;
+    background: $primary;
+    margin-right: 1;
+}
+
+#stop-btn {
     width: 1fr;
     background: $error;
+}
+
+/* Tool Output */
+ToolOutput {
+    background: $panel;
+    border: solid $primary;
+    margin: 1 0;
+    padding: 0;
+    height: auto;
+}
+
+.tool-header {
+    background: $boost;
+    color: $foreground;
+    padding: 0 1;
+    text-style: bold;
+    width: 100%;
+}
+
+.tool-args {
+    color: $accent;
+    text-style: italic;
+    border-bottom: solid $divider;
+    padding: 0 1;
+    margin-top: 0;
+}
+
+.tool-result {
+    padding: 0 1;
 }

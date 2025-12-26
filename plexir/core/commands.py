@@ -128,6 +128,8 @@ class CommandProcessor:
                 return await self._config_reorder(sub_args)
             elif subcommand == "debug":
                 return self._config_debug(sub_args)
+            elif subcommand == "tool":
+                return self._config_tool(sub_args)
             else:
                 return f"Unknown /config subcommand: {subcommand}."
         except Exception as e:
@@ -139,11 +141,20 @@ class CommandProcessor:
 **`/config` Commands:**
 - `/config list`: List all providers and failover order.
 - `/config set <name> <key> <value>`: Set a provider property.
+- `/config tool <domain> <key> <value>`: Set a tool property (e.g. `tool git token X`).
 - `/config add <name> <type> <model> [api_key=<key>] [base_url=<url>]`: Add new provider.
 - `/config delete <name>`: Delete a provider.
 - `/config reorder <name> <up|down>`: Change failover order.
 - `/config debug <on|off>`: Toggle debug mode.
 """
+
+    def _config_tool(self, args: List[str]) -> str:
+        """Configures tool settings."""
+        if len(args) < 3:
+            return "Usage: `/config tool <domain> <key> <value>`"
+        domain, key, value = args[0], args[1], " ".join(args[2:])
+        config_manager.set_tool_config(domain, key, value)
+        return f"Tool config updated: {domain}.{key} = {value}"
 
     def _config_list(self) -> str:
         """Lists current configuration settings."""

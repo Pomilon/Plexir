@@ -4,7 +4,7 @@
 
 ![Plexir UI](assets/image.png)
 
-[![Version](https://img.shields.io/badge/version-1.0.0-blue.svg)](https://github.com/pomilon/plexir)
+[![Version](https://img.shields.io/badge/version-1.2.0-blue.svg)](https://github.com/pomilon/plexir)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 ---
@@ -14,13 +14,23 @@
 - **Multi-Provider Failover**: Seamlessly switch between Gemini, Groq, and OpenAI-compatible APIs. If one model hits a quota, Plexir automatically fails over to the next in your priority list.
 - **Smart Retries**: Intelligently detects transient rate limits (429s) and retries with a delay, while instantly falling back for hard resource exhaustion.
 - **Persistent Docker Sandbox**: Launch with `--sandbox` to give the AI its own persistent Linux "computer." All tools (file system, git, shell) are automatically redirected inside the container.
+- **Smart Agent Capabilities**:
+    - **RAG & Context**: `codebase_search` allows natural language queries across your codebase. `get_definitions` quickly maps file structures.
+    - **Planning**: Built-in `scratchpad` memory for long-term planning and note-taking.
+    - **Visual Safety**: Critical actions like writing files show a **Rich Visual Diff** (Red/Green) in the confirmation modal before execution.
 - **Advanced Agentic Tools**:
     - **Filesystem**: `read_file`, `write_file`, `list_directory`, `edit_file` (precise patching).
-    - **Git Suite**: `git_status`, `git_diff`, `git_add`, `git_commit`.
+    - **Git Suite**: `git_status`, `git_diff`, `git_add`, `git_commit`, `git_checkout`, `git_branch`.
     - **Web Capabilities**: `web_search` (DuckDuckGo) and `browse_url` (content extraction).
     - **Code Execution**: `python_sandbox` for isolated logic testing.
-- **Human-in-the-Loop (HITL)**: Safety first. Critical actions like writing files or running shell commands require explicit user confirmation via a modal dialog.
-- **Modern TUI**: Built with [Textual](https://textual.textualize.io/), featuring dynamic themes (`tokyo-night`, `hacker`, `plexir-light`), a live workspace tree, and real-time performance stats.
+- **Human-in-the-Loop (HITL)**: Safety first. Critical actions require explicit user confirmation.
+    - **Visual Diffs**: Review changes before they happen.
+    - **Skip/Stop**: Granular control to skip a specific tool or stop the entire process.
+- **Modern TUI**: Built with [Textual](https://textual.textualize.io/), featuring:
+    - **Collapsible Tool Outputs**: Keep your chat clean while preserving execution details.
+    - **Dynamic Themes**: `tokyo-night`, `hacker`, `plexir-light`.
+    - **Live Workspace**: Real-time file tree updates.
+    - **Command Palette**: `Ctrl+P` for quick actions.
 - **Macros & Sessions**: Record complex workflows into macros and persist chat histories across sessions.
 
 ---
@@ -62,7 +72,7 @@ plexir --sandbox
 - `Ctrl+F`: Focus Input
 - `Ctrl+Y`: Copy last AI response to clipboard
 - `Ctrl+R`: Reload providers from config
-- `Ctrl+C`: Quit
+- `Ctrl+C`: **Interrupt Generation** (if running) or Quit
 
 ### Slash Commands
 - `/config list`: View current providers and order.

@@ -10,6 +10,7 @@ Plexir agents are equipped with a powerful set of tools to interact with the sys
 | `write_file` | Creates or overwrites a file. | **Yes** |
 | `list_directory` | Lists files and folders in a path. | No |
 | `edit_file` | Precise text replacement within a file. | **Yes** |
+| `get_definitions` | Summarizes classes and functions in a file. | No |
 
 ## Git Tools
 
@@ -19,6 +20,15 @@ Plexir agents are equipped with a powerful set of tools to interact with the sys
 | `git_diff` | Shows changes between commits/files. | No |
 | `git_add` | Adds file contents to the index. | **Yes** |
 | `git_commit` | Records changes to the repository. | **Yes** |
+| `git_checkout` | Switches branches or restores files. | **Yes** |
+| `git_branch` | Lists, creates, or deletes branches. | No |
+
+## Smart Agent Utilities
+
+| Tool | Description | Critical? |
+| :--- | :--- | :--- |
+| `codebase_search` | Semantically searches code using natural language keywords. | No |
+| `scratchpad` | Reads/Writes/Clears a persistent memory file for planning. | No |
 
 ## Web & Information
 
@@ -33,4 +43,6 @@ Plexir agents are equipped with a powerful set of tools to interact with the sys
 Executes Python code in an isolated Docker container. This is useful for performing complex calculations, data processing, or testing logic without affecting your host environment.
 
 ## Critical Actions & HITL
-Tools marked as **Critical** in the table above will trigger a **Human-in-the-Loop (HITL)** confirmation dialog in the TUI. You must manually click **Confirm** before the action is executed. This prevents the AI from making unwanted changes to your files or repository.
+Tools marked as **Critical** in the table above will trigger a **Human-in-the-Loop (HITL)** confirmation dialog in the TUI. 
+*   **Visual Diffs:** For `write_file` and `edit_file`, the confirmation dialog displays a color-coded diff of the proposed changes.
+*   You must manually click **Confirm** before the action is executed.

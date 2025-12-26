@@ -10,7 +10,10 @@ from typing import List, Dict, Any, AsyncGenerator, Union, Optional
 from plexir.tools.base import ToolRegistry
 from plexir.tools.definitions import (
     ReadFileTool, WriteFileTool, ListDirTool, RunShellTool, GrepTool, GitStatusTool,
-    EditFileTool, GitDiffTool, GitAddTool, GitCommitTool, WebSearchTool, BrowseURLTool
+    EditFileTool, GitDiffTool, GitAddTool, GitCommitTool, GitCheckoutTool, GitBranchTool,
+    GitPushTool, GitPullTool,
+    GitHubCreateIssueTool, GitHubCreatePRTool,
+    WebSearchTool, BrowseURLTool, CodebaseSearchTool, GetDefinitionsTool, ScratchpadTool
 )
 from plexir.tools.sandbox import PythonSandboxTool, PersistentSandbox
 from plexir.core import context
@@ -72,7 +75,10 @@ class Router:
         tools = [
             ReadFileTool(), WriteFileTool(), ListDirTool(), RunShellTool(),
             PythonSandboxTool(), GrepTool(), GitStatusTool(), EditFileTool(),
-            GitDiffTool(), GitAddTool(), GitCommitTool(), WebSearchTool(), BrowseURLTool()
+            GitDiffTool(), GitAddTool(), GitCommitTool(), GitCheckoutTool(), GitBranchTool(),
+            GitPushTool(), GitPullTool(),
+            GitHubCreateIssueTool(), GitHubCreatePRTool(),
+            WebSearchTool(), BrowseURLTool(), CodebaseSearchTool(), GetDefinitionsTool(), ScratchpadTool()
         ]
         for tool in tools:
             if self.sandbox:
@@ -132,6 +138,12 @@ class Router:
 
         default_prompt_template = """You are Plexir, an advanced AI Assistant.
 CRITICAL: You have ACCESS to system tools. Use them proactively{sandbox_notice}
+
+# Core Instructions
+1. **Plan First**: For complex tasks, use the `scratchpad` to outline your plan before executing code.
+2. **Context is King**: If you are unsure where code is located, use `codebase_search` to find it. Do not guess file paths.
+3. **Verify**: After editing files, use `grep_search` or `read_file` to verify the changes were applied correctly.
+4. **Safety**: When using `edit_file` or `write_file`, you will be asked for confirmation. Ensure your edits are precise.
 
 Available Tools:
 {tool_descriptions}

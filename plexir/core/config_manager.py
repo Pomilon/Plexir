@@ -33,6 +33,7 @@ class AppConfig(BaseModel):
     theme: str = "tokyo-night"
     debug_mode: bool = False
     macros: Dict[str, List[str]] = Field(default_factory=dict)
+    tool_configs: Dict[str, Dict[str, str]] = Field(default_factory=dict)
 
 class ConfigManager:
     """Manages loading, saving, and updating the application configuration."""
@@ -148,5 +149,16 @@ class ConfigManager:
         if name in self.config.macros:
             del self.config.macros[name]
             self.save()
+
+    def set_tool_config(self, tool_domain: str, key: str, value: str):
+        """Sets a configuration value for a specific tool domain (e.g. 'git', 'web')."""
+        if tool_domain not in self.config.tool_configs:
+            self.config.tool_configs[tool_domain] = {}
+        self.config.tool_configs[tool_domain][key] = value
+        self.save()
+
+    def get_tool_config(self, tool_domain: str, key: str) -> Optional[str]:
+        """Retrieves a tool configuration value."""
+        return self.config.tool_configs.get(tool_domain, {}).get(key)
 
 config_manager = ConfigManager()
