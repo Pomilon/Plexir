@@ -98,6 +98,7 @@ Example failover hierarchy:
 
 Detailed guides are available in the `docs/` directory:
 - [Getting Started](docs/getting_started.md)
+- [Slash Command Reference](docs/COMMANDS.md)
 - [Tool Reference](docs/tools.md)
 - [Sandbox Environment](docs/sandbox.md)
 - [Configuring Providers](docs/configuration.md)

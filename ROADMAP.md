@@ -34,6 +34,7 @@ We have successfully implemented the core foundation and advanced agentic capabi
 - [x] **Configuration**: Robust JSON-based config system for providers and tools.
 - [x] **Session Management**: Save, load, and manage conversation history.
 - [x] **Macros**: Record and replay complex command sequences.
+- [x] **Documentation**: Comprehensive `COMMANDS.md` and `tools.md` updated for v1.2.
 
 ---
 
