@@ -36,20 +36,32 @@ class Tool(ABC):
         properties = model_schema.get("properties", {})
         required = model_schema.get("required", [])
 
+        def map_type(json_type: str) -> str:
+            if json_type == "integer": return "INTEGER"
+            elif json_type == "number": return "NUMBER"
+            elif json_type == "boolean": return "BOOLEAN"
+            elif json_type == "array": return "ARRAY"
+            elif json_type == "object": return "OBJECT"
+            return "STRING"
+
         for prop, details in properties.items():
             # Map JSON schema types to Gemini types
             json_type = details.get("type", "string")
-            gemini_type = "STRING"
-            if json_type == "integer": gemini_type = "INTEGER"
-            elif json_type == "number": gemini_type = "NUMBER"
-            elif json_type == "boolean": gemini_type = "BOOLEAN"
-            elif json_type == "array": gemini_type = "ARRAY"
-            elif json_type == "object": gemini_type = "OBJECT"
+            gemini_type = map_type(json_type)
             
-            schema["parameters"]["properties"][prop] = {
+            prop_schema = {
                 "type": gemini_type,
                 "description": details.get("description", "")
             }
+
+            if gemini_type == "ARRAY":
+                items = details.get("items", {})
+                item_type = items.get("type", "string")
+                prop_schema["items"] = {
+                    "type": map_type(item_type)
+                }
+            
+            schema["parameters"]["properties"][prop] = prop_schema
             
         schema["parameters"]["required"] = required
         return schema
