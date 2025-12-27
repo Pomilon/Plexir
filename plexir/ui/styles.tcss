@@ -177,13 +177,16 @@ Input:focus {
 
 /* Tool Status Overlay */
 ToolStatus {
-    dock: top;
     height: 1;
     width: 100%;
     background: $primary;
     color: $background;
+    display: none;
     text-align: center;
     text-style: bold;
+}
+
+.hidden {
     display: none;
 }
 

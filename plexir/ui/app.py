@@ -10,7 +10,7 @@ import time
 from typing import List, Dict, Any, Optional
 
 from textual.app import App, ComposeResult
-from textual.widgets import Input, Label, Static, Footer, DirectoryTree
+from textual.widgets import Input, Label, Static, Footer, DirectoryTree, Collapsible, LoadingIndicator
 from textual.containers import VerticalScroll
 from textual.theme import Theme
 from textual import work
@@ -113,6 +113,10 @@ class PlexirApp(App):
         
         stats = self.query_one("#stats-panel", StatsPanel)
         stats.sandbox_active = self.router.sandbox_enabled
+        
+        # Set initial model name
+        if self.router.providers:
+            stats.model_name = self.router.providers[self.router.active_provider_index].name
 
         initial_theme = config_manager.config.theme or "tokyo-night"
         
@@ -134,6 +138,14 @@ class PlexirApp(App):
     async def action_reload_providers(self):
         """Reloads LLM providers from configuration."""
         await self.router.reload_providers()
+        
+        # Update model name in UI
+        stats = self.query_one("#stats-panel", StatsPanel)
+        if self.router.providers:
+            stats.model_name = self.router.providers[self.router.active_provider_index].name
+        else:
+            stats.model_name = "None"
+            
         self.notify("Providers reloaded from config.")
         self.query_one("#user-input", Input).focus()
 
@@ -373,6 +385,10 @@ class PlexirApp(App):
             while True:
                 tool_called = False
                 
+                # Reasoning state
+                reasoning_content = ""
+                is_thinking = False
+                
                 async for chunk in self.router.route(self.history):
                     stats.latency = time.monotonic() - start_time
                     
@@ -448,28 +464,69 @@ class PlexirApp(App):
                         break 
                     
                     if isinstance(chunk, str):
-                        current_text_buffer += chunk
-                        
-                        now = time.monotonic()
-                        
-                        # Dynamic Throttling (Tweaked for better performance):
-                        buf_len = len(current_text_buffer)
-                        if buf_len < 1000: update_interval = 0.1
-                        elif buf_len < 3000: update_interval = 0.2
-                        elif buf_len < 8000: update_interval = 0.5
-                        else: update_interval = 1.0
-                        
-                        if now - last_update_time > update_interval:
-                            dist_from_bottom = chat_scroll.max_scroll_y - chat_scroll.scroll_y
-                            should_scroll = dist_from_bottom <= 2 or last_update_time == 0
+                        text_to_process = chunk
+                        while text_to_process:
+                            if not is_thinking:
+                                if "<think>" in text_to_process:
+                                    pre, post = text_to_process.split("<think>", 1)
+                                    current_text_buffer += pre
+                                    is_thinking = True
+                                    tool_status.set_status("Thinking...", running=True)
+                                    text_to_process = post
+                                    
+                                    # Update visible text before thinking
+                                    current_text_widget.update(current_text_buffer)
+                                else:
+                                    current_text_buffer += text_to_process
+                                    text_to_process = ""
+                            else: # is_thinking
+                                if "</think>" in text_to_process:
+                                    thought, post = text_to_process.split("</think>", 1)
+                                    reasoning_content += thought
+                                    is_thinking = False
+                                    
+                                    # Render reasoning
+                                    if reasoning_content.strip():
+                                        reasoning_widget = Collapsible(
+                                            MessageContent(reasoning_content), 
+                                            title="Reasoning Process"
+                                        )
+                                        await model_bubble.mount(reasoning_widget)
+                                        
+                                        # Create new text widget for post-reasoning content
+                                        current_text_widget = MessageContent("")
+                                        await model_bubble.mount(current_text_widget)
+                                        current_text_buffer = "" 
+                                        last_update_time = 0
+
+                                    tool_status.set_status("Generating", running=True)
+                                    text_to_process = post
+                                else:
+                                    reasoning_content += text_to_process
+                                    text_to_process = ""
+
+                        # Update UI if not thinking
+                        if not is_thinking:
+                            now = time.monotonic()
                             
-                            current_text_widget.update(current_text_buffer)
+                            # Dynamic Throttling (Tweaked for better performance):
+                            buf_len = len(current_text_buffer)
+                            if buf_len < 1000: update_interval = 0.1
+                            elif buf_len < 3000: update_interval = 0.2
+                            elif buf_len < 8000: update_interval = 0.5
+                            else: update_interval = 1.0
                             
-                            if should_scroll:
-                                # Scroll the WIDGET into view, which is more reliable for "pushing up"
-                                self.call_after_refresh(current_text_widget.scroll_visible, animate=False, top=False)
+                            if now - last_update_time > update_interval:
+                                dist_from_bottom = chat_scroll.max_scroll_y - chat_scroll.scroll_y
+                                should_scroll = dist_from_bottom <= 2 or last_update_time == 0
                                 
-                            last_update_time = now
+                                current_text_widget.update(current_text_buffer)
+                                
+                                if should_scroll:
+                                    # Scroll the WIDGET into view
+                                    self.call_after_refresh(current_text_widget.scroll_visible, animate=False, top=False)
+                                    
+                                last_update_time = now
 
                 if not tool_called:
                     current_text_widget.update(current_text_buffer)
@@ -481,11 +538,13 @@ class PlexirApp(App):
 
             tool_status.set_status("Ready", running=False)
             stats.status = "Idle"
+            self.refresh()
             
         except Exception as e:
             current_text_widget.update(f"\n\n[ERROR]: {str(e)}")
             tool_status.set_status("Error", running=False)
             stats.status = "Error"
+            self.refresh()
 
 def run(sandbox_enabled: bool = False):
     """Entry point to start the Plexir TUI application."""

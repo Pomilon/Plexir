@@ -3,10 +3,11 @@ Custom Textual widgets for the Plexir TUI.
 Includes MessageBubbles, StatsPanel, and WorkspaceTree.
 """
 
+import itertools
 from textual.app import ComposeResult
 from textual.containers import Container, Horizontal
 from textual.reactive import reactive
-from textual.widgets import Static, Label, Markdown as MarkdownWidget, DirectoryTree, Collapsible
+from textual.widgets import Static, Label, Markdown as MarkdownWidget, DirectoryTree, Collapsible, LoadingIndicator
 
 class MessageContent(MarkdownWidget):
     """Widget to display message content with Markdown support."""
@@ -89,13 +90,26 @@ class StatsPanel(Static):
 class ToolStatus(Static):
     """A status bar displayed at the top during tool execution."""
     
+    def on_mount(self) -> None:
+        self._spinner = itertools.cycle(["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"])
+        self._message = ""
+        self._running = False
+        self.set_interval(0.1, self._update_spinner)
+
+    def _update_spinner(self) -> None:
+        if self._running:
+            s = next(self._spinner)
+            self.update(f"{s} {self._message}")
+            self.refresh()
+
     def set_status(self, message: str, running: bool = True):
         """Updates the status message and visibility."""
         self.display = True
-        if running:
-            self.update(f"⚙️  {message}")
-        else:
+        self._message = message
+        self._running = running
+        if not running:
             self.update(f"✓ {message}")
+        self.refresh()
 
 class WorkspaceTree(Container):
     """A wrapper for DirectoryTree displayed in the sidebar."""
