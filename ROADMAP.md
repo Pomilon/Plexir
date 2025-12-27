@@ -48,11 +48,13 @@ We have successfully implemented the core foundation and advanced agentic capabi
 - [x] **Search API Integration**: Support for Tavily and Serper APIs with DuckDuckGo fallback.
 - [x] **Clean Extraction**: `browse_url` now filters out noise (nav, scripts) and supports sandbox-local URLs.
 
+### 🔌 Deep MCP Integration
+- [x] **MCP Resource Support**: Implemented "Resources" primitive support with dynamic resource tools for the agent.
+- [ ] **Complex Server Support**: Validate against more complex official servers (PostgreSQL, etc.) once environment permits.
+
 ---
 
 ## 🚧 In Progress / Next Up (v1.3)
-- [ ] **Complex Server Support**: Validate the existing JSON-RPC client against complex servers like PostgreSQL or SQLite (official implementations).
-- [ ] **MCP Resource Support**: Fully implement the "Resources" primitive of the MCP protocol (currently focusing on "Tools").
 
 ### 3. Testing & CI/CD
 - [ ] **Coverage Expansion**: Increase unit test coverage for UI components (`widgets.py`, `app.py`).

@@ -26,7 +26,7 @@ class JSONRPCError(Exception):
 class MCPClient:
     """
     A robust JSON-RPC 2.0 client for the Model Context Protocol.
-    Supports stdio transport, lifecycle management, and tool registration.
+    Supports stdio transport, lifecycle management, tools, and resources.
     """
     def __init__(self, config: ProviderConfig, tool_registry: ToolRegistry):
         self.config = config
@@ -37,6 +37,7 @@ class MCPClient:
         self._pending_requests: Dict[int, asyncio.Future] = {}
         self._read_task = None
         self._stderr_task = None
+        self.resources: List[Dict[str, Any]] = []
         logger.info(f"MCP Client initialized for {config.name}.")
 
     async def connect(self):
@@ -66,17 +67,21 @@ class MCPClient:
                 "protocolVersion": "2024-11-05", 
                 "capabilities": {
                     "tools": {},
-                    "resources": {} # Future proofing
+                    "resources": {},
+                    "logging": {}
                 },
-                "clientInfo": {"name": "Plexir", "version": "1.2.0"}
+                "clientInfo": {"name": "Plexir", "version": "1.3.0"}
             })
             logger.info(f"MCP {self.config.name} Initialized. Server: {init_result.get('serverInfo', 'Unknown')}")
             
             # 2. Initialized Notification
             await self.send_notification("notifications/initialized")
             
-            # 3. List Tools
-            await self.refresh_tools()
+            # 3. List Tools & Resources
+            await asyncio.gather(
+                self.refresh_tools(),
+                self.refresh_resources()
+            )
             
         except FileNotFoundError:
             logger.error(f"MCP Client {self.config.name} failed: Command not found.")
@@ -94,6 +99,65 @@ class MCPClient:
             logger.info(f"MCP {self.config.name}: Registered {len(tools)} tools.")
         except Exception as e:
             logger.error(f"Failed to list tools for {self.config.name}: {e}")
+
+    async def refresh_resources(self):
+        """Fetches resources from the server."""
+        try:
+            result = await self.send_request("resources/list")
+            self.resources = result.get("resources", [])
+            if self.resources:
+                # Register a helper tool to browse these resources
+                self._register_resource_tool()
+                logger.info(f"MCP {self.config.name}: Found {len(self.resources)} resources.")
+        except Exception as e:
+            # Not all servers support resources, ignore if not supported
+            logger.debug(f"MCP {self.config.name} does not support resources/list: {e}")
+
+    def _register_resource_tool(self):
+        """Registers a tool that allows the agent to list and read MCP resources."""
+        # Use a closure-friendly approach
+        client = self
+        server_name = self.config.name
+
+        class MCPResourceSchema(BaseModel):
+            action: str = Field(..., description="Action: 'list' or 'read'")
+            uri: Optional[str] = Field(None, description="The URI of the resource to read (required for 'read')")
+
+        class MCPResourceTool(Tool):
+            name = f"mcp_{server_name.lower().replace(' ', '_')}_resources"
+            description = f"List or read resources from the {server_name} MCP server."
+            args_schema = MCPResourceSchema
+
+            async def run(self, action: str, uri: Optional[str] = None) -> str:
+                if action == "list":
+                    # Refresh first to get latest
+                    await client.refresh_resources()
+                    if not client.resources:
+                        return "No resources available on this server."
+                    output = [f"Available Resources on {server_name}:"]
+                    for res in client.resources:
+                        output.append(f"- {res.get('name')} ({res.get('uri')}): {res.get('description', '')}")
+                    return "\n".join(output)
+                
+                elif action == "read":
+                    if not uri:
+                        return "Error: URI is required for 'read' action."
+                    try:
+                        res = await client.send_request("resources/read", {"uri": uri})
+                        contents = res.get("contents", [])
+                        output = []
+                        for item in contents:
+                            if "text" in item:
+                                output.append(item["text"])
+                            elif "blob" in item:
+                                output.append(f"[Binary Content (Base64): {len(item['blob'])} bytes]")
+                        return "\n\n".join(output) if output else "Resource is empty."
+                    except Exception as e:
+                        return f"Failed to read resource: {e}"
+                
+                return f"Unknown action: {action}"
+
+        self.tool_registry.register(MCPResourceTool())
 
     async def send_request(self, method: str, params: Optional[Dict] = None) -> Any:
         """Sends a JSON-RPC request and waits for the result."""
