@@ -46,6 +46,8 @@ Sets a configuration value for a specific tool suite. This is how you provide to
 - **Example (Git PAT)**: `/config tool git token ghp_...`
 - **Example (GitHub Permissions)**: `/config tool github token ghp_...`
 - **Example (GitHub Permissions)**: `/config tool github allowed_repos pomilon/plexir,another/repo`
+- **Example (Web Search)**: `/config tool web tavily_api_key tvly-XXXX`
+- **Example (Web Search)**: `/config tool web serper_api_key XXXX`
 
 #### `/config add <name> <type> <model> [options]`
 Adds a new LLM provider.

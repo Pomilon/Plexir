@@ -30,12 +30,18 @@ Plexir agents are equipped with a powerful set of tools to interact with the sys
 | `codebase_search` | Semantically searches code using natural language keywords. | No |
 | `scratchpad` | Reads/Writes/Clears a persistent memory file for planning. | No |
 
+## MCP & Extensibility
+
+| Tool | Description | Critical? |
+| :--- | :--- | :--- |
+| `mcp_<server>_resources` | List or read resources (schemas, logs, etc.) from an MCP server. | No |
+
 ## Web & Information
 
 | Tool | Description | Critical? |
 | :--- | :--- | :--- |
-| `web_search` | Searches DuckDuckGo for top results. | No |
-| `browse_url` | Extracts text content from a URL. | No |
+| `web_search` | Searches the web using Tavily/Serper (if configured) or DuckDuckGo. | No |
+| `browse_url` | Extracts clean text content from a URL. Supports local sandbox URLs. | No |
 
 ## Code Execution
 
