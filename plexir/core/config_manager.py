@@ -32,6 +32,7 @@ class AppConfig(BaseModel):
     active_provider_order: List[str] = ["Gemini Primary", "Gemini Fallback", "Groq Backup"]
     theme: str = "tokyo-night"
     debug_mode: bool = False
+    session_budget: float = 0.0 # 0.0 means no limit
     macros: Dict[str, List[str]] = Field(default_factory=dict)
     tool_configs: Dict[str, Dict[str, str]] = Field(default_factory=dict)
 

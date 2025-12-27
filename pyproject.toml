@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "plexir"
-version = "1.3.0"
+version = "1.4.0"
 authors = [
   { name = "Pomilon", email = "pomilon@proton.me" },
 ]

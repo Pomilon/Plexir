@@ -29,6 +29,7 @@ class RouterEvent:
     RETRY = "retry"
     TOOL_CALL = "tool_call"
     TOOL_RESULT = "tool_result"
+    USAGE = "usage"
 
     def __init__(self, event_type: str, data: Any = None):
         self.type = event_type
@@ -59,7 +60,8 @@ class Router:
     """
     Manages LLM providers, tool registries, and failover logic with smart retries.
     """
-    
+    MAX_HISTORY_MESSAGES = 40
+
     def __init__(self, sandbox_enabled: bool = False):
         self.registry = ToolRegistry()
         self.mcp_clients: List[MCPClient] = []
@@ -69,6 +71,24 @@ class Router:
         self.load_base_tools()
         self.providers = []
         self.active_provider_index = 0
+        self.session_usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0, "total_cost": 0.0}
+
+        # Naive pricing map (per 1M tokens)
+        self.PRICING_MAP = {
+            "gemini-2.0-flash": (0.10, 0.40),
+            "gemini-1.5-flash": (0.075, 0.30),
+            "gemini-1.5-pro": (1.25, 5.00),
+            "gpt-4o": (2.50, 10.00),
+            "gpt-4o-mini": (0.15, 0.60),
+            "claude-3-5-sonnet": (3.00, 15.00),
+            "llama-3.3-70b-versatile": (0.59, 0.79), # Groq
+        }
+
+    def _calculate_cost(self, model: str, prompt_tokens: int, completion_tokens: int) -> float:
+        """Estimates cost based on model and token counts."""
+        rates = self.PRICING_MAP.get(model.lower(), (0.50, 1.50)) # Default fallback
+        cost = (prompt_tokens / 1_000_000 * rates[0]) + (completion_tokens / 1_000_000 * rates[1])
+        return cost
 
     def load_base_tools(self):
         """Loads all built-in tools into the registry."""
@@ -125,6 +145,17 @@ class Router:
         """
         Orchestrates LLM generation with smart retries and wrap-around failover.
         """
+        # 0. Check budget
+        budget = config_manager.config.session_budget
+        if budget > 0 and self.session_usage["total_cost"] >= budget:
+            yield f"\n[ERROR] Session budget exceeded (${self.session_usage['total_cost']:.2f} >= ${budget:.2f})."
+            return
+
+        # 1. Check for summarization
+        if len(history) > self.MAX_HISTORY_MESSAGES:
+            yield RouterEvent("system", data="Summarizing old conversation history to save context...")
+            await self.summarize_session(history)
+
         num_providers = len(self.providers)
         if num_providers == 0:
             yield "\n[System Error]: No LLM providers available."
@@ -180,6 +211,23 @@ Available Tools:
                         if first_chunk:
                             self.active_provider_index = actual_index
                             first_chunk = False
+                        
+                        if isinstance(chunk, dict) and chunk.get("type") == "usage":
+                            p_tokens = chunk.get("prompt_tokens", 0)
+                            c_tokens = chunk.get("completion_tokens", 0)
+                            t_tokens = chunk.get("total_tokens", 0)
+                            
+                            self.session_usage["prompt_tokens"] += p_tokens
+                            self.session_usage["completion_tokens"] += c_tokens
+                            self.session_usage["total_tokens"] += t_tokens
+                            
+                            cost = self._calculate_cost(provider.model_name, p_tokens, c_tokens)
+                            self.session_usage["total_cost"] += cost
+                            
+                            chunk["total_cost_accumulated"] = self.session_usage["total_cost"]
+                            yield RouterEvent(RouterEvent.USAGE, data=chunk)
+                            continue
+                            
                         yield chunk
                     return # Success! 
 
@@ -213,3 +261,34 @@ Available Tools:
     def get_tool(self, name: str):
         """Retrieves a tool by name."""
         return self.registry.get(name)
+
+    async def summarize_session(self, history: List[Dict[str, Any]]):
+        """
+        Summarizes older parts of the conversation to save context.
+        """
+        to_summarize, to_keep = context.get_messages_to_summarize(history, 20)
+        if not to_summarize:
+            return
+
+        summary_prompt = "Summarize the following conversation history concisely, focusing on key decisions, findings, and completed tasks. Maintain essential technical details."
+        distilled_to_summarize = context.distill(to_summarize)
+        
+        provider = self.providers[self.active_provider_index]
+        summary_text = ""
+        
+        try:
+            async for chunk in provider.generate([], f"{summary_prompt}\n\n{distilled_to_summarize}"):
+                if isinstance(chunk, str):
+                    summary_text += chunk
+            
+            if summary_text:
+                # Replace history with summary + pinned + recent
+                new_history = [
+                    {"role": "system", "content": f"BACKGROUND SUMMARY of previous conversation:\n{summary_text.strip()}", "pinned": True}
+                ] + to_keep
+                # In-place update of history list
+                history.clear()
+                history.extend(new_history)
+                logger.info("Session history summarized.")
+        except Exception as e:
+            logger.error(f"Failed to summarize session: {e}")

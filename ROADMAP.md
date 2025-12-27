@@ -52,14 +52,20 @@ We have successfully implemented the core foundation and advanced agentic capabi
 - [x] **MCP Resource Support**: Implemented "Resources" primitive support with dynamic resource tools for the agent.
 - [ ] **Complex Server Support**: Validate against more complex official servers (PostgreSQL, etc.) once environment permits.
 
----
+## ✅ Completed Milestones (v1.4)
 
-## 🚧 In Progress / Next Up (v1.3)
+### 📈 Metrics & Economics
+- [x] **Token Tracking**: Real-time Input/Output/Total token usage displayed in the sidebar.
+- [x] **Cost Estimation**: Automatic session cost calculation based on model pricing.
+- [x] **Budgeting**: Enforceable session budget limits via `/config budget`.
 
-### 🧪 Testing & CI/CD
-- [x] **Coverage Expansion**: Updated and expanded unit tests for UI components and core logic.
-- [x] **Integration Tests**: Added end-to-end tests that run within the persistent Docker sandbox.
-- [x] **CI/CD Pipeline**: Added GitHub Actions workflow for automated testing.
+### 🔌 Advanced MCP Integration
+- [x] **MCP Prompts**: Discovery and retrieval of reusable prompt templates from MCP servers.
+- [x] **Resource Templates**: Full discovery of dynamic URI templates for complex servers.
+
+### 🧠 Coherent Memory Management
+- [x] **Rolling Summarization**: Automatic background summarization of distant history when context limits are approached.
+- [x] **Context Pinning**: Manual control over history via `/session pin` to keep critical messages in focus forever.
 
 ---
 

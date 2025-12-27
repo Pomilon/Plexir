@@ -38,6 +38,8 @@ class MCPClient:
         self._read_task = None
         self._stderr_task = None
         self.resources: List[Dict[str, Any]] = []
+        self.resource_templates: List[Dict[str, Any]] = []
+        self.prompts: List[Dict[str, Any]] = []
         logger.info(f"MCP Client initialized for {config.name}.")
 
     async def connect(self):
@@ -68,19 +70,21 @@ class MCPClient:
                 "capabilities": {
                     "tools": {},
                     "resources": {},
+                    "prompts": {},
                     "logging": {}
                 },
-                "clientInfo": {"name": "Plexir", "version": "1.3.0"}
+                "clientInfo": {"name": "Plexir", "version": "1.4.0"}
             })
             logger.info(f"MCP {self.config.name} Initialized. Server: {init_result.get('serverInfo', 'Unknown')}")
             
             # 2. Initialized Notification
             await self.send_notification("notifications/initialized")
             
-            # 3. List Tools & Resources
+            # 3. List Tools, Resources & Prompts
             await asyncio.gather(
                 self.refresh_tools(),
-                self.refresh_resources()
+                self.refresh_resources(),
+                self.refresh_prompts()
             )
             
         except FileNotFoundError:
@@ -101,21 +105,33 @@ class MCPClient:
             logger.error(f"Failed to list tools for {self.config.name}: {e}")
 
     async def refresh_resources(self):
-        """Fetches resources from the server."""
+        """Fetches resources and templates from the server."""
         try:
-            result = await self.send_request("resources/list")
-            self.resources = result.get("resources", [])
-            if self.resources:
-                # Register a helper tool to browse these resources
+            res_list = await self.send_request("resources/list")
+            self.resources = res_list.get("resources", [])
+            
+            tmpl_list = await self.send_request("resources/templates/list")
+            self.resource_templates = tmpl_list.get("resourceTemplates", [])
+
+            if self.resources or self.resource_templates:
                 self._register_resource_tool()
-                logger.info(f"MCP {self.config.name}: Found {len(self.resources)} resources.")
+                logger.info(f"MCP {self.config.name}: Found {len(self.resources)} resources and {len(self.resource_templates)} templates.")
         except Exception as e:
-            # Not all servers support resources, ignore if not supported
-            logger.debug(f"MCP {self.config.name} does not support resources/list: {e}")
+            logger.debug(f"MCP {self.config.name} resources/list failed: {e}")
+
+    async def refresh_prompts(self):
+        """Fetches prompts from the server."""
+        try:
+            result = await self.send_request("prompts/list")
+            self.prompts = result.get("prompts", [])
+            if self.prompts:
+                self._register_prompt_tool()
+                logger.info(f"MCP {self.config.name}: Found {len(self.prompts)} prompts.")
+        except Exception as e:
+            logger.debug(f"MCP {self.config.name} prompts/list failed: {e}")
 
     def _register_resource_tool(self):
         """Registers a tool that allows the agent to list and read MCP resources."""
-        # Use a closure-friendly approach
         client = self
         server_name = self.config.name
 
@@ -125,39 +141,82 @@ class MCPClient:
 
         class MCPResourceTool(Tool):
             name = f"mcp_{server_name.lower().replace(' ', '_')}_resources"
-            description = f"List or read resources from the {server_name} MCP server."
+            description = f"List or read resources (including templates) from the {server_name} MCP server."
             args_schema = MCPResourceSchema
 
             async def run(self, action: str, uri: Optional[str] = None) -> str:
                 if action == "list":
-                    # Refresh first to get latest
                     await client.refresh_resources()
-                    if not client.resources:
-                        return "No resources available on this server."
                     output = [f"Available Resources on {server_name}:"]
                     for res in client.resources:
                         output.append(f"- {res.get('name')} ({res.get('uri')}): {res.get('description', '')}")
-                    return "\n".join(output)
+                    
+                    if client.resource_templates:
+                        output.append("\nResource Templates:")
+                        for t in client.resource_templates:
+                            output.append(f"- {t.get('name')} ({t.get('uriTemplate')}): {t.get('description', '')}")
+                    
+                    return "\n".join(output) if len(output) > 1 else "No resources found."
                 
                 elif action == "read":
-                    if not uri:
-                        return "Error: URI is required for 'read' action."
+                    if not uri: return "Error: URI is required for 'read' action."
                     try:
                         res = await client.send_request("resources/read", {"uri": uri})
                         contents = res.get("contents", [])
                         output = []
                         for item in contents:
-                            if "text" in item:
-                                output.append(item["text"])
-                            elif "blob" in item:
-                                output.append(f"[Binary Content (Base64): {len(item['blob'])} bytes]")
+                            if "text" in item: output.append(item["text"])
+                            elif "blob" in item: output.append(f"[Binary Content: {len(item['blob'])} bytes]")
                         return "\n\n".join(output) if output else "Resource is empty."
                     except Exception as e:
                         return f"Failed to read resource: {e}"
-                
                 return f"Unknown action: {action}"
 
         self.tool_registry.register(MCPResourceTool())
+
+    def _register_prompt_tool(self):
+        """Registers a tool that allows the agent to list and use MCP prompts."""
+        client = self
+        server_name = self.config.name
+
+        class MCPPromptSchema(BaseModel):
+            action: str = Field(..., description="Action: 'list' or 'get'")
+            name: Optional[str] = Field(None, description="The name of the prompt (required for 'get')")
+            arguments: Optional[Dict[str, str]] = Field(None, description="Arguments for the prompt (optional for 'get')")
+
+        class MCPPromptTool(Tool):
+            name = f"mcp_{server_name.lower().replace(' ', '_')}_prompts"
+            description = f"List or retrieve prompt templates from the {server_name} MCP server."
+            args_schema = MCPPromptSchema
+
+            async def run(self, action: str, name: Optional[str] = None, arguments: Optional[Dict[str, str]] = None) -> str:
+                if action == "list":
+                    await client.refresh_prompts()
+                    if not client.prompts: return "No prompts available."
+                    output = [f"Available Prompts on {server_name}:"]
+                    for p in client.prompts:
+                        args_str = ", ".join([f"{a['name']}" for a in p.get("arguments", [])])
+                        output.append(f"- {p.get('name')}: {p.get('description', '')} (Args: {args_str})")
+                    return "\n".join(output)
+                
+                elif action == "get":
+                    if not name: return "Error: Prompt name is required for 'get' action."
+                    try:
+                        res = await client.send_request("prompts/get", {"name": name, "arguments": arguments or {}})
+                        description = res.get("description", "")
+                        messages = res.get("messages", [])
+                        output = [f"Prompt: {name}\n{description}\n"]
+                        for msg in messages:
+                            role = msg.get("role", "system")
+                            content = msg.get("content", {})
+                            if content.get("type") == "text":
+                                output.append(f"[{role.upper()}]: {content.get('text')}")
+                        return "\n".join(output)
+                    except Exception as e:
+                        return f"Failed to get prompt: {e}"
+                return f"Unknown action: {action}"
+
+        self.tool_registry.register(MCPPromptTool())
 
     async def send_request(self, method: str, params: Optional[Dict] = None) -> Any:
         """Sends a JSON-RPC request and waits for the result."""

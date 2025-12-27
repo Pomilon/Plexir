@@ -38,6 +38,8 @@ class StatsPanel(Static):
     status = reactive("Idle")
     latency = reactive(0.0)
     sandbox_active = reactive(False)
+    tokens = reactive(0)
+    cost = reactive(0.0)
 
     def compose(self) -> ComposeResult:
         """Composes the statistics panel layout."""
@@ -48,6 +50,14 @@ class StatsPanel(Static):
         with Horizontal(classes="stat-row"):
             yield Label("STATUS", classes="stat-label")
             yield Label(self.status, id="stat-status", classes="stat-value")
+
+        with Horizontal(classes="stat-row"):
+            yield Label("TOKENS", classes="stat-label")
+            yield Label(f"{self.tokens}", id="stat-tokens", classes="stat-value")
+
+        with Horizontal(classes="stat-row"):
+            yield Label("COST", classes="stat-label")
+            yield Label(f"${self.cost:.4f}", id="stat-cost", classes="stat-value")
 
         with Horizontal(classes="stat-row"):
             yield Label("TIME", classes="stat-label")
@@ -75,6 +85,20 @@ class StatsPanel(Static):
         """Updates the latency label."""
         try:
             self.query_one("#stat-latency", Label).update(f"{value:.2f}s")
+        except Exception:
+            pass
+
+    def watch_tokens(self, value: int):
+        """Updates the tokens label."""
+        try:
+            self.query_one("#stat-tokens", Label).update(str(value))
+        except Exception:
+            pass
+
+    def watch_cost(self, value: float):
+        """Updates the cost label."""
+        try:
+            self.query_one("#stat-cost", Label).update(f"${value:.4f}")
         except Exception:
             pass
 

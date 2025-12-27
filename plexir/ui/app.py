@@ -403,6 +403,10 @@ class PlexirApp(App):
                             data = chunk.data
                             retry_msg = f"⏳ [yellow]RATE LIMIT HIT[/yellow] on {data['provider']}. Retrying ({data['attempt']}/{data['max']})..."
                             tool_status.set_status(retry_msg, running=True)
+                        elif chunk.type == RouterEvent.USAGE:
+                            data = chunk.data
+                            stats.tokens = self.router.session_usage["total_tokens"]
+                            stats.cost = self.router.session_usage["total_cost"]
                         continue
                     
                     if isinstance(chunk, dict) and chunk.get("type") == "tool_call":

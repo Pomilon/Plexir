@@ -61,3 +61,28 @@ def distill(history: List[Dict[str, Any]]) -> str:
         return "No relevant recent context available."
 
     return "--- Distilled Previous Context (from failover) ---\n" + "".join(distilled_parts) + "----------------------------------------------------"
+
+def get_messages_to_summarize(history: List[Dict[str, Any]], count: int) -> tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    """
+    Splits history into 'to be summarized' and 'to keep' (pinned or recent).
+    """
+    to_summarize = []
+    to_keep = []
+    
+    # We never summarize the last 10 messages to keep immediate flow
+    keep_recent = history[-10:] if len(history) > 10 else history
+    history_old = history[:-10] if len(history) > 10 else []
+
+    for msg in history_old:
+        if msg.get("pinned"):
+            to_keep.append(msg)
+        else:
+            to_summarize.append(msg)
+            
+    # If we have too many to summarize, only take 'count' oldest
+    if len(to_summarize) > count:
+        remaining = to_summarize[count:]
+        to_summarize = to_summarize[:count]
+        to_keep = to_keep + remaining
+
+    return to_summarize, to_keep + keep_recent

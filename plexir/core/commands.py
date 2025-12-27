@@ -128,12 +128,24 @@ class CommandProcessor:
                 return await self._config_reorder(sub_args)
             elif subcommand == "debug":
                 return self._config_debug(sub_args)
+            elif subcommand == "budget":
+                return self._config_budget(sub_args)
             elif subcommand == "tool":
                 return self._config_tool(sub_args)
             else:
                 return f"Unknown /config subcommand: {subcommand}."
         except Exception as e:
             return f"[ERROR] Config error: {e}"
+
+    def _config_budget(self, args: List[str]) -> str:
+        """Sets the session cost limit."""
+        if not args: return "Usage: `/config budget <value>`"
+        try:
+            val = float(args[0])
+            config_manager.update_app_setting("session_budget", val)
+            return f"Session budget set to ${val:.2f}."
+        except ValueError:
+            return "Error: Budget must be a number."
 
     def _config_help(self) -> str:
         """Returns help for /config command."""
@@ -146,6 +158,7 @@ class CommandProcessor:
 - `/config delete <name>`: Delete a provider.
 - `/config reorder <name> <up|down>`: Change failover order.
 - `/config debug <on|off>`: Toggle debug mode.
+- `/config budget <value>`: Set session cost limit (e.g. 0.50). 0 for no limit.
 """
 
     def _config_tool(self, args: List[str]) -> str:
@@ -170,6 +183,7 @@ class CommandProcessor:
         msg += "\n--- Application Settings ---\n"
         msg += f"Theme: `{config_manager.config.theme}`\n"
         msg += f"Debug Mode: `{'On' if config_manager.config.debug_mode else 'Off'}`\n"
+        msg += f"Session Budget: `${config_manager.config.session_budget:.2f}`\n"
         
         # Tool specific configs
         if config_manager.config.tool_configs:
@@ -282,6 +296,26 @@ class CommandProcessor:
             elif subcommand == "delete":
                 if not sub_args: return "Usage: `/session delete <name>`"
                 return self.session_manager.delete_session(sub_args[0])
+            elif subcommand == "pin":
+                if not sub_args: return "Usage: `/session pin <index>`"
+                try:
+                    idx = int(sub_args[0]) - 1
+                    if 0 <= idx < len(self.app.history):
+                        self.app.history[idx]["pinned"] = True
+                        return f"Message {idx+1} pinned."
+                    return "Error: Invalid message index."
+                except ValueError:
+                    return "Error: Index must be a number."
+            elif subcommand == "unpin":
+                if not sub_args: return "Usage: `/session unpin <index>`"
+                try:
+                    idx = int(sub_args[0]) - 1
+                    if 0 <= idx < len(self.app.history):
+                        self.app.history[idx]["pinned"] = False
+                        return f"Message {idx+1} unpinned."
+                    return "Error: Invalid message index."
+                except ValueError:
+                    return "Error: Index must be a number."
             else:
                 return f"Unknown /session subcommand: {subcommand}."
         except Exception as e:
@@ -295,6 +329,8 @@ class CommandProcessor:
 - `/session load <name>`: Load a saved history.
 - `/session list`: List all saved sessions.
 - `/session delete <name>`: Delete a saved session.
+- `/session pin <index>`: Pin a message to prevent summarization.
+- `/session unpin <index>`: Unpin a message.
 """
 
     # --- Macro Management ---

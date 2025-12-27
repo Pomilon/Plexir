@@ -4,7 +4,7 @@
 
 ![Plexir UI](assets/image.png)
 
-[![Version](https://img.shields.io/badge/version-1.3.0-blue.svg)](https://github.com/pomilon/plexir)
+[![Version](https://img.shields.io/badge/version-1.4.0-blue.svg)](https://github.com/pomilon/plexir)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 ---
@@ -12,10 +12,11 @@
 ## 🚀 Features
 
 - **Multi-Provider Failover**: Seamlessly switch between Gemini, Groq, and OpenAI-compatible APIs. If one model hits a quota, Plexir automatically fails over to the next in your priority list.
+- **Economics & Metrics**: Real-time **Token Tracking** and **Cost Estimation** in the sidebar. Set a session budget via `/config budget` to prevent runaway costs.
 - **Advanced Reasoning Support**: Automatically filters model "thinking" blocks into collapsible widgets and provides a **Live Status Spinner** during reasoning.
-- **Smart Retries**: Intelligently detects transient rate limits (429s) and retries with a delay, while instantly falling back for hard resource exhaustion.
+- **Coherent Memory**: **Rolling Summarization** automatically condenses long histories, while **Message Pinning** (`/session pin`) ensures critical context is never lost.
 - **Persistent Docker Sandbox**: Launch with `--sandbox` to give the AI its own persistent Linux "computer." All tools (file system, git, shell) are automatically redirected inside the container.
-- **Deep MCP Integration**: Fully supports **Model Context Protocol (MCP)**, including dynamic discovery of tools and **Resources** (e.g., database schemas) from MCP servers.
+- **Deep MCP Integration**: Fully supports **Model Context Protocol (MCP)**, including dynamic discovery of tools, **Resources**, **Resource Templates**, and **Prompts** from MCP servers.
 - **Smart Agent Capabilities**:
     - **RAG & Context**: `codebase_search` allows natural language queries across your codebase. `get_definitions` quickly maps file structures.
     - **Planning**: Built-in `scratchpad` memory for long-term planning and note-taking.

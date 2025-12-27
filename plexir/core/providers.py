@@ -98,6 +98,16 @@ class GeminiProvider(LLMProvider):
             )
             
             async for chunk in response:
+                # Handle usage metadata
+                if hasattr(chunk, 'usage_metadata') and chunk.usage_metadata:
+                    m = chunk.usage_metadata
+                    yield {
+                        "type": "usage",
+                        "prompt_tokens": m.prompt_token_count,
+                        "completion_tokens": m.candidates_token_count,
+                        "total_tokens": m.total_token_count
+                    }
+
                 if not hasattr(chunk, 'candidates') or not chunk.candidates:
                     continue
                 
@@ -184,11 +194,22 @@ class OpenAICompatibleProvider(LLMProvider):
                 tools=openai_tools if openai_tools else None,
                 tool_choice="auto" if openai_tools else None,
                 stream=True,
+                stream_options={"include_usage": True}
             )
             
             tool_call_accumulator = {} 
 
             async for chunk in stream:
+                # Handle usage metadata
+                if hasattr(chunk, 'usage') and chunk.usage:
+                    u = chunk.usage
+                    yield {
+                        "type": "usage",
+                        "prompt_tokens": u.prompt_tokens,
+                        "completion_tokens": u.completion_tokens,
+                        "total_tokens": u.total_tokens
+                    }
+
                 if not hasattr(chunk, 'choices') or not chunk.choices:
                     continue
                 
