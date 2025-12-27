@@ -198,17 +198,84 @@ class GrepTool(Tool):
         return result.stdout[:5000]
 
 class WebSearchTool(Tool):
-    """Performs a web search using DuckDuckGo."""
+    """Performs a web search using Tavily (primary) or DuckDuckGo (fallback)."""
     name = "web_search"
-    description = "Searches the web for information using DuckDuckGo and returns top results (title and URL)."
+    description = "Searches the web for information and returns top results. Uses Tavily if API key is configured, otherwise falls back to DuckDuckGo."
     args_schema = WebSearchSchema
 
     async def run(self, query: str) -> str:
-        if self.sandbox:
-            # In sandbox, use curl to fetch the DDG HTML page
-            cmd = f"curl -s -L -H 'User-Agent: Mozilla/5.0' 'https://duckduckgo.com/html/?q={query}'"
-            return await self.sandbox.exec(cmd)
+        # Check for Tavily API key in config
+        tavily_key = config_manager.get_tool_config("web", "tavily_api_key")
+        serper_key = config_manager.get_tool_config("web", "serper_api_key")
 
+        if tavily_key:
+            return await self._search_tavily(query, tavily_key)
+        elif serper_key:
+            return await self._search_serper(query, serper_key)
+        
+        # Fallback to DuckDuckGo (scraping)
+        return await self._search_ddg_fallback(query)
+
+    async def _search_tavily(self, query: str, api_key: str) -> str:
+        import requests
+        url = "https://api.tavily.com/search"
+        data = {
+            "api_key": api_key,
+            "query": query,
+            "search_depth": "basic",
+            "max_results": 5,
+            "include_answer": True
+        }
+        try:
+            # We run on host to use installed requests and api key
+            response = await asyncio.to_thread(requests.post, url, json=data, timeout=15)
+            response.raise_for_status()
+            res_json = response.json()
+            
+            output = []
+            if res_json.get("answer"):
+                output.append(f"💡 **Direct Answer:** {res_json['answer']}\n")
+            
+            results = res_json.get("results", [])
+            for res in results:
+                output.append(f"Title: {res['title']}\nURL: {res['url']}\nSnippet: {res.get('content', '')}")
+            
+            return "\n\n".join(output) if output else "No results found."
+        except Exception as e:
+            logger.warning(f"Tavily search failed, falling back: {e}")
+            return await self._search_ddg_fallback(query)
+
+    async def _search_serper(self, query: str, api_key: str) -> str:
+        import requests
+        url = "https://google.serper.dev/search"
+        headers = {
+            'X-API-KEY': api_key,
+            'Content-Type': 'application/json'
+        }
+        data = {"q": query, "num": 5}
+        try:
+            response = await asyncio.to_thread(requests.post, url, headers=headers, json=data, timeout=15)
+            response.raise_for_status()
+            res_json = response.json()
+            
+            output = []
+            # Handle knowledge graph if present
+            if "knowledgeGraph" in res_json:
+                kg = res_json["knowledgeGraph"]
+                output.append(f"💡 **Info:** {kg.get('title')} - {kg.get('description')}\n")
+
+            for res in res_json.get("organic", []):
+                output.append(f"Title: {res.get('title')}\nURL: {res.get('link')}\nSnippet: {res.get('snippet')}")
+            
+            return "\n\n".join(output) if output else "No results found."
+        except Exception as e:
+            logger.warning(f"Serper search failed, falling back: {e}")
+            return await self._search_ddg_fallback(query)
+
+    async def _search_ddg_fallback(self, query: str) -> str:
+        """DuckDuckGo scraping fallback logic."""
+        # If in sandbox, we could curl, but for structured results it's better to scrape on host
+        # even if sandboxed, as web search is global.
         try:
             import requests
             from bs4 import BeautifulSoup
@@ -225,15 +292,17 @@ class WebSearchTool(Tool):
                 for result_div in soup.find_all("div", class_="result"):
                     title_tag = result_div.find("a", class_="result__a")
                     link_tag = result_div.find("a", class_="result__url")
+                    snippet_tag = result_div.find("a", class_="result__snippet")
                     if title_tag and link_tag:
-                        results.append(f"Title: {title_tag.get_text(strip=True)}\nURL: {link_tag['href']}")
+                        snippet = snippet_tag.get_text(strip=True) if snippet_tag else ""
+                        results.append(f"Title: {title_tag.get_text(strip=True)}\nURL: {link_tag['href']}\nSnippet: {snippet}")
                     if len(results) >= 5:
                         break
                 return "\n\n".join(results) if results else "No results found."
 
             return await asyncio.to_thread(sync_search)
         except Exception as e:
-            return f"Search failed: {e}"
+            return f"Search failed (all methods exhausted): {e}"
 
 class BrowseURLSchema(BaseModel):
     url: str = Field(..., description="The URL to browse.")
@@ -241,38 +310,59 @@ class BrowseURLSchema(BaseModel):
 class BrowseURLTool(Tool):
     """Fetches and extracts text content from a specific URL."""
     name = "browse_url"
-    description = "Fetches the content of a specific web page and returns the extracted text."
+    description = "Fetches the content of a web page and returns the extracted text. Support local URLs if in sandbox."
     args_schema = BrowseURLSchema
 
     async def run(self, url: str) -> str:
-        if self.sandbox:
-            return await self.sandbox.exec(f"curl -s -L '{url}'")
+        # If in sandbox and URL is local (localhost/127.0.0.1), we must fetch FROM sandbox
+        is_local = "localhost" in url or "127.0.0.1" in url or url.startswith("/")
+        
+        if self.sandbox and is_local:
+            # Fetch HTML via curl in sandbox, then parse on host
+            html = await self.sandbox.exec(f"curl -s -L '{url}'")
+            if html.startswith("Error") or not html.strip():
+                return f"Failed to fetch {url} from sandbox."
+            return self._extract_text(html)
 
         try:
             import requests
-            from bs4 import BeautifulSoup
-
-            def sync_browse():
+            def sync_fetch():
                 headers = {
                     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
                 }
                 response = requests.get(url, headers=headers, timeout=15)
                 response.raise_for_status()
-                soup = BeautifulSoup(response.text, "html.parser")
-                
-                # Extract text from common tags
-                parts = [p.get_text(strip=True) for p in soup.find_all(["p", "h1", "h2", "h3", "li"])]
-                text = "\n".join(p for p in parts if p)
-                
-                if not text:
-                    return "No readable text content found."
-                
-                # Truncate to avoid context overflow
-                return text[:8000]
+                return response.text
 
-            return await asyncio.to_thread(sync_browse)
+            html = await asyncio.to_thread(sync_fetch)
+            return self._extract_text(html)
         except Exception as e:
             return f"Failed to browse URL: {e}"
+
+    def _extract_text(self, html: str) -> str:
+        """Helper to extract clean text from HTML using BeautifulSoup."""
+        try:
+            from bs4 import BeautifulSoup
+            soup = BeautifulSoup(html, "html.parser")
+            
+            # Remove scripts, styles, and nav elements
+            for tag in soup(["script", "style", "nav", "footer", "header", "aside"]):
+                tag.decompose()
+            
+            # Get text and clean whitespace
+            text = soup.get_text(separator="\n")
+            lines = (line.strip() for line in text.splitlines())
+            # Drop blank lines and very short snippets
+            chunks = (phrase.strip() for line in lines for phrase in line.split("  "))
+            clean_text = "\n".join(chunk for chunk in chunks if len(chunk) > 20)
+            
+            if not clean_text:
+                return "No readable text content found."
+            
+            # Truncate to avoid context overflow (limit to ~4000 tokens / 12000 chars)
+            return clean_text[:12000]
+        except Exception as e:
+            return f"Extraction failed: {e}"
 
 # --- Git Tools ---
 

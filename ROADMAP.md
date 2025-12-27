@@ -38,15 +38,19 @@ We have successfully implemented the core foundation and advanced agentic capabi
 
 ---
 
+## ✅ Completed Milestones (v1.3 - In Progress)
+
+### 🧠 Core Intelligence & UI
+- [x] **Reasoning Filtering**: Added `<think>` block parsing and collapsible reasoning widgets in the TUI.
+- [x] **Live Status Indicator**: Implemented a responsive character-based spinner for "Thinking/Executing" states.
+
+### 🌐 Enhanced Web Capabilities
+- [x] **Search API Integration**: Support for Tavily and Serper APIs with DuckDuckGo fallback.
+- [x] **Clean Extraction**: `browse_url` now filters out noise (nav, scripts) and supports sandbox-local URLs.
+
+---
+
 ## 🚧 In Progress / Next Up (v1.3)
-
-These features are partially implemented or prioritized for the next iteration.
-
-### 1. Enhanced Web Capabilities
-- [ ] **Search API Integration**: Replace current scraping (`web_search`) with a robust API (e.g., Tavily, Serper) for reliable, citation-backed results.
-- [ ] **Deep Browsing**: Improve `browse_url` to handle dynamic JS-heavy sites (possibly via a headless browser microservice).
-
-### 2. Deep MCP Integration
 - [ ] **Complex Server Support**: Validate the existing JSON-RPC client against complex servers like PostgreSQL or SQLite (official implementations).
 - [ ] **MCP Resource Support**: Fully implement the "Resources" primitive of the MCP protocol (currently focusing on "Tools").
 
