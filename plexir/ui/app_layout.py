@@ -4,7 +4,7 @@ Defines the structure of the main interface.
 """
 
 from textual.app import ComposeResult
-from textual.widgets import Input, Label, Static, Footer
+from textual.widgets import Label, Static, Footer, TextArea
 from textual.containers import Vertical, Horizontal, VerticalScroll, Container
 from plexir.ui.widgets import ToolStatus, StatsPanel, WorkspaceTree
 from plexir import __version__
@@ -35,6 +35,6 @@ def compose_main_layout() -> ComposeResult:
                 )
             
             with Container(id="input-container"):
-                yield Input(placeholder="Enter instruction...", id="user-input")
+                yield TextArea(id="user-input", soft_wrap=True)
     
     yield Footer(id="footer")

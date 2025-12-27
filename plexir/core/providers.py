@@ -5,6 +5,7 @@ Handles communication with Gemini and OpenAI-compatible APIs (Groq, Ollama, etc.
 
 import json
 import logging
+import time
 from abc import ABC, abstractmethod
 from typing import List, Dict, Any, AsyncGenerator, Union, Optional
 
@@ -65,25 +66,55 @@ class GeminiProvider(LLMProvider):
 
         gemini_history = []
         for msg in history:
-            role = msg.get("role", "user")
-            if role in ("assistant", "model"):
-                role = "model"
+            raw_role = msg.get("role", "user")
             
-            parts = msg.get("parts", [])
-            if parts:
-                is_func = any("function_response" in p for p in parts)
-                gemini_history.append({
-                    "role": "function" if is_func else role,
-                    "parts": parts
-                })
-                continue
-
+            # Map roles to Gemini's expected 'user' or 'model'
+            if raw_role in ("assistant", "model"):
+                role = "model"
+            else:
+                role = "user" # Map 'system', 'user', etc. to 'user'
+            
+            parts = []
+            
+            # Handle summary or system messages by prefixing content
+            content_prefix = ""
+            if raw_role == "system":
+                content_prefix = "[SYSTEM CONTEXT]: "
+            
             content = msg.get("content", "").strip()
             if content:
-                gemini_history.append({"role": role, "parts": [content]})
+                parts.append({"text": content_prefix + content})
+            
+            if "parts" in msg:
+                for p in msg["parts"]:
+                    if "text" in p:
+                        parts.append({"text": p["text"]})
+                    elif "function_call" in p:
+                        fc = p["function_call"]
+                        parts.append({"function_call": {"name": fc["name"], "args": fc["args"]}})
+                    elif "function_response" in p:
+                        fr = p["function_response"]
+                        # Gemini tool response MUST be a dict
+                        res = fr["response"]
+                        if not isinstance(res, dict):
+                            res = {"result": res}
+                        parts.append({"function_response": {"name": fr["name"], "response": res}})
+
+            if not parts:
+                continue
+
+            # Ensure alternating roles or at least valid role transitions
+            # Gemini is picky about 'function_response' being in a 'user' role message
+            is_func_response = any("function_response" in p for p in parts)
+            current_role = "user" if is_func_response else role
+            
+            gemini_history.append({
+                "role": current_role,
+                "parts": parts
+            })
             
         if not gemini_history:
-            gemini_history = [{"role": "user", "parts": ["Hello"]}]
+            gemini_history = [{"role": "user", "parts": [{"text": "Hello"}]}]
 
         model = genai.GenerativeModel(
             model_name=self.model_name,
@@ -155,34 +186,59 @@ class OpenAICompatibleProvider(LLMProvider):
 
         openai_history = []
         for msg in history:
-            role = "assistant" if msg["role"] == "model" else msg["role"]
-            content = msg.get("content", "")
+            raw_role = msg.get("role", "user")
+            role = "assistant" if raw_role == "model" else raw_role
             
-            # OpenAI strictly separates assistant tool calls and tool responses
+            # OpenAI history shouldn't have 'system' role in the middle usually, 
+            # but if it does, map to 'user' for safety with picky providers.
+            if role == "system" and openai_history:
+                role = "user"
+                content = "[SYSTEM CONTEXT]: " + msg.get("content", "")
+            else:
+                content = msg.get("content", "")
+
+            new_msg = {"role": role}
+            if content.strip():
+                new_msg["content"] = content.strip()
+                
             if "parts" in msg:
+                tool_calls = []
                 for p in msg["parts"]:
                     if "function_call" in p:
                         fc = p["function_call"]
-                        openai_history.append({
-                            "role": "assistant",
-                            "tool_calls": [{
-                                "id": fc.get("id", "call_default"),
-                                "type": "function",
-                                "function": {"name": fc["name"], "arguments": json.dumps(fc["args"])}
-                            }]
+                        tool_calls.append({
+                            "id": fc.get("id") or f"call_{len(openai_history)}_{int(time.time())}",
+                            "type": "function",
+                            "function": {"name": fc["name"], "arguments": json.dumps(fc["args"])}
                         })
                     elif "function_response" in p:
                         fr = p["function_response"]
+                        # Extract the result more cleanly
+                        res_obj = fr.get("response", {})
+                        res_content = res_obj.get("result") if isinstance(res_obj, dict) else res_obj
+                        if res_content is None: res_content = str(res_obj)
+
                         openai_history.append({
                             "role": "tool",
-                            "tool_call_id": fr.get("id", "call_default"),
+                            "tool_call_id": fr.get("id") or "call_default",
                             "name": fr["name"],
-                            "content": str(fr["response"].get("result", ""))
+                            "content": json.dumps(res_content) if isinstance(res_content, (dict, list)) else str(res_content)
                         })
-                continue
-
-            if content:
-                openai_history.append({"role": role, "content": content})
+                
+                if tool_calls:
+                    new_msg["tool_calls"] = tool_calls
+            
+            if new_msg.get("content") or new_msg.get("tool_calls"):
+                # Merge consecutive assistant messages
+                if openai_history and openai_history[-1]["role"] == "assistant" and role == "assistant":
+                    if new_msg.get("content"):
+                        old_content = openai_history[-1].get("content", "")
+                        openai_history[-1]["content"] = (old_content + "\n" + new_msg["content"]).strip()
+                    if new_msg.get("tool_calls"):
+                        old_tcs = openai_history[-1].get("tool_calls", [])
+                        openai_history[-1]["tool_calls"] = old_tcs + new_msg["tool_calls"]
+                else:
+                    openai_history.append(new_msg)
 
         messages = [{"role": "system", "content": system_instruction}] + openai_history
         openai_tools = self.tools.to_openai_toolbox()
@@ -235,13 +291,13 @@ class OpenAICompatibleProvider(LLMProvider):
                                 tool_call_accumulator[idx]["args"] += tc.function.arguments
 
                 if getattr(choice, 'finish_reason', None) == "tool_calls":
-                     for data in tool_call_accumulator.values():
+                     for idx, data in tool_call_accumulator.items():
                         try:
                             yield {
                                 "type": "tool_call",
                                 "name": data["name"],
                                 "args": json.loads(data["args"]) if data["args"] else {},
-                                "id": data["id"]
+                                "id": data["id"] or f"call_{int(time.time())}_{idx}"
                             }
                         except json.JSONDecodeError:
                             logger.error(f"Failed to parse tool args: {data['args']}")

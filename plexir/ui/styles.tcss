@@ -158,21 +158,21 @@ MessageContent {
 
 /* Input Area */
 #input-container {
-    height: auto;
-    padding: 1;
+    height: 6;
+    padding: 0;
     background: $background;
     border-top: solid $divider;
 }
 
-Input {
+TextArea {
+    height: 100%;
     background: $panel;
     border: none;
     color: $foreground;
-    padding: 0 1;
 }
 
-Input:focus {
-    border: solid $primary;
+TextArea:focus {
+    border: none;
 }
 
 /* Tool Status Overlay */

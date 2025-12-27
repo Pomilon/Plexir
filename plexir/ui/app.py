@@ -10,10 +10,10 @@ import time
 from typing import List, Dict, Any, Optional
 
 from textual.app import App, ComposeResult
-from textual.widgets import Input, Label, Static, Footer, DirectoryTree, Collapsible, LoadingIndicator
+from textual.widgets import Label, Static, Footer, DirectoryTree, Collapsible, LoadingIndicator, TextArea
 from textual.containers import VerticalScroll
 from textual.theme import Theme
-from textual import work
+from textual import work, on, events
 
 from plexir.ui.widgets import MessageContent, ToolStatus, StatsPanel, MessageBubble, ToolOutput
 from plexir.ui.app_layout import compose_main_layout
@@ -88,6 +88,7 @@ class PlexirApp(App):
         ("ctrl+y", "copy_last_response", "Copy AI"),
         ("ctrl+c", "interrupt_or_quit", "Stop/Quit"),
         ("ctrl+f", "focus_input", "Focus Input"),
+        ("ctrl+enter", "submit", "Submit"),
     ]
 
     def __init__(self, sandbox_enabled: bool = False):
@@ -106,6 +107,9 @@ class PlexirApp(App):
         self.is_recording_macro = False
         self.current_macro_name: Optional[str] = None
         self.recorded_commands: List[str] = []
+
+        # Queue state
+        self.message_queue: asyncio.Queue = asyncio.Queue()
 
     async def on_mount(self) -> None:
         """Initializes providers, UI state, and theme on startup."""
@@ -129,6 +133,9 @@ class PlexirApp(App):
         except Exception:
             self.theme = "tokyo-night"
 
+        # Start queue processor
+        self.process_queue()
+
     def compose(self) -> ComposeResult:
         """Composes the main application layout."""
         yield from compose_main_layout()
@@ -147,13 +154,13 @@ class PlexirApp(App):
             stats.model_name = "None"
             
         self.notify("Providers reloaded from config.")
-        self.query_one("#user-input", Input).focus()
+        self.query_one("#user-input", TextArea).focus()
 
     def action_toggle_sidebar(self):
         """Toggles sidebar visibility."""
         sidebar = self.query_one("#sidebar")
         sidebar.toggle_class("-hidden")
-        self.query_one("#user-input", Input).focus()
+        self.query_one("#user-input", TextArea).focus()
 
     def action_interrupt_or_quit(self):
         """Interrupts current generation or quits the app."""
@@ -175,7 +182,7 @@ class PlexirApp(App):
 
     def action_focus_input(self):
         """Focuses the main command input."""
-        self.query_one("#user-input", Input).focus()
+        self.query_one("#user-input", TextArea).focus()
 
     def action_copy_last_response(self):
         """Copies the content of the last AI message to the clipboard."""
@@ -205,25 +212,40 @@ class PlexirApp(App):
         self.router.reset_provider()
         self.notify("Chat history cleared.")
 
-    # --- Event Handlers ---
-
-    def watch_theme(self, old_theme: str, new_theme: str) -> None:
-        """Persists theme changes to configuration when updated."""
-        if new_theme != old_theme:
-            try:
-                config_manager.update_app_setting("theme", new_theme)
-                logger.info(f"Theme persisted: {new_theme}")
-            except Exception as e:
-                logger.error(f"Failed to persist theme change: {e}")
-
-    async def on_input_submitted(self, message: Input.Submitted) -> None:
-        """Handles user input from the main text field."""
-        user_text = message.value
+    def action_submit(self):
+        """Submits the current input via Ctrl+J or Ctrl+Enter."""
+        text_area = self.query_one("#user-input", TextArea)
+        user_text = text_area.text
         if not user_text.strip():
             return
+        
+        text_area.text = ""
+        self.message_queue.put_nowait(user_text)
 
-        input_widget = self.query_one("#user-input", Input)
-        input_widget.value = ""
+    # --- Event Handlers ---
+
+    def on_key(self, event: events.Key) -> None:
+        """Handles global key events, specifically for multi-line input submission."""
+        if event.key == "ctrl+enter":
+            if self.focused and self.focused.id == "user-input":
+                event.stop()
+                self.action_submit()
+
+    # --- Queue Processing ---
+
+    @work(exclusive=True)
+    async def process_queue(self):
+        """Sequentially processes messages from the queue."""
+        while True:
+            user_text = await self.message_queue.get()
+            try:
+                await self.handle_user_message(user_text)
+            finally:
+                self.message_queue.task_done()
+
+    async def handle_user_message(self, user_text: str):
+        """Processes a single user message."""
+        input_widget = self.query_one("#user-input", TextArea)
 
         # 1. Process slash commands
         command_response = await self.command_processor.process(user_text)
@@ -253,8 +275,21 @@ class PlexirApp(App):
         self.history.append({"role": "user", "content": user_text})
         self._add_message("user", user_text)
 
-        # 3. Trigger AI response
-        self.generation_worker = self.generate_response()
+        # 3. Trigger AI response and WAIT for it to finish
+        try:
+            self.generation_worker = self.generate_response()
+            await self.generation_worker.wait()
+        except Exception as e:
+            logger.debug(f"Generation worker ended: {e}")
+
+    def watch_theme(self, old_theme: str, new_theme: str) -> None:
+        """Persists theme changes to configuration when updated."""
+        if new_theme != old_theme:
+            try:
+                config_manager.update_app_setting("theme", new_theme)
+                logger.info(f"Theme persisted: {new_theme}")
+            except Exception as e:
+                logger.error(f"Failed to persist theme change: {e}")
 
     # --- Macro Support ---
 
@@ -282,12 +317,12 @@ class PlexirApp(App):
     async def play_macro(self, commands: List[str]):
         """Executes a list of commands sequentially."""
         self.notify("Playing macro...")
-        input_widget = self.query_one("#user-input", Input)
         for cmd in commands:
-            input_widget.value = cmd
-            await self.on_input_submitted(Input.Submitted(input_widget, cmd))
-            await asyncio.sleep(0.5)
-        self.notify("Macro playback finished.")
+            self.message_queue.put_nowait(cmd)
+            # We don't need to sleep here because the queue processes sequentially
+            # But we might want a small delay to avoid UI flicker if they are all instant
+            await asyncio.sleep(0.1)
+        self.notify("Macro playback queued.")
 
     # --- UI Helpers ---
 
@@ -333,7 +368,7 @@ class PlexirApp(App):
 
     # --- AI Orchestration ---
 
-    @work(exclusive=True)
+    @work
     async def generate_response(self) -> None:
         """Background worker that handles LLM generation and tool execution loop."""
         stats = self.query_one("#stats-panel", StatsPanel)
