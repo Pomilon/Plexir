@@ -170,6 +170,17 @@ class CommandProcessor:
         msg += "\n--- Application Settings ---\n"
         msg += f"Theme: `{config_manager.config.theme}`\n"
         msg += f"Debug Mode: `{'On' if config_manager.config.debug_mode else 'Off'}`\n"
+        
+        # Tool specific configs
+        if config_manager.config.tool_configs:
+            msg += "\n--- Tool Configurations ---\n"
+            for domain, settings in config_manager.config.tool_configs.items():
+                msg += f"[{domain.upper()}]\n"
+                for k, v in settings.items():
+                    # Mask tokens/keys
+                    display_v = v if "key" not in k.lower() and "token" not in k.lower() else "********"
+                    msg += f"  - {k}: {display_v}\n"
+
         return msg
 
     async def _config_set(self, args: List[str]) -> str:
