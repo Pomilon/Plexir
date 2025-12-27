@@ -1,13 +1,18 @@
 import pytest
+import asyncio
 from plexir.core.context import distill
 from plexir.config import settings
-from plexir.core.router import GeminiProvider, Router, RouterEvent
+from plexir.core.router import Router, RouterEvent
+from textual.app import App, ComposeResult
+from plexir.ui.widgets import StatsPanel
+from textual.widgets import Label
 
 # --- Config Tests ---
 def test_config_loading():
     """Verify settings are loaded correctly."""
     assert settings.APP_NAME == "Plexir"
-    assert settings.GEMINI_API_KEY is not None
+    # API key might be None in CI, so we just check if it's reachable
+    assert hasattr(settings, "GEMINI_API_KEY")
 
 # --- Context Tests ---
 def test_distill():
@@ -23,14 +28,9 @@ def test_distill():
 # --- Router Tests ---
 @pytest.mark.asyncio
 async def test_router_failover_logic():
-    """
-    Test the router logic by mocking providers.
-    We don't want to hit real APIs in unit tests generally, 
-    but we verified the real API integration with verify_router.py.
-    Here we test the routing logic itself.
-    """
+    """Test the router logic by mocking providers."""
     router = Router()
-    # Mock providers to force failover
+    
     class MockFailingProvider:
         name = "MockFail"
         async def generate(self, h, s):
@@ -48,14 +48,37 @@ async def test_router_failover_logic():
     async for chunk in router.route([]):
         results.append(chunk)
     
-    # We expect a Failover event then "Success"
-    assert RouterEvent.FAILOVER in results
+    # Check for FAILOVER event in the results
+    assert any(isinstance(c, RouterEvent) and c.type == RouterEvent.FAILOVER for c in results)
     assert "Success" in results
 
 # --- UI Logic Tests ---
-# We can't easily test TUI rendering, but we can test Widget logic if separated.
-# For now, ensuring imports work is a good baseline.
+
+class StatsPanelTestApp(App):
+    def compose(self) -> ComposeResult:
+        yield StatsPanel(id="stats-panel")
+
+@pytest.mark.asyncio
+async def test_statspanel_updates():
+    """Verify StatsPanel reactive attributes update correctly."""
+    app = StatsPanelTestApp()
+    async with app.run_test() as pilot:
+        panel = app.query_one("#stats-panel", StatsPanel)
+        panel.model_name = "Test Model"
+        panel.status = "Busy"
+        panel.latency = 1.23
+        panel.sandbox_active = True
+        
+        await pilot.pause()
+        
+        assert str(app.query_one("#stat-model", Label).render()) == "Test Model"
+        assert str(app.query_one("#stat-status", Label).render()) == "Busy"
+        assert str(app.query_one("#stat-latency", Label).render()) == "1.23s"
+        assert str(app.query_one("#stat-sandbox", Label).render()) == "ON"
+
 def test_ui_imports():
-    from plexir.ui.widgets import StreamLog, StatsPanel
-    assert StreamLog is not None
+    from plexir.ui.widgets import MessageBubble, StatsPanel, ToolStatus, ToolOutput
+    assert MessageBubble is not None
     assert StatsPanel is not None
+    assert ToolStatus is not None
+    assert ToolOutput is not None

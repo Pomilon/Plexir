@@ -56,9 +56,10 @@ We have successfully implemented the core foundation and advanced agentic capabi
 
 ## 🚧 In Progress / Next Up (v1.3)
 
-### 3. Testing & CI/CD
-- [ ] **Coverage Expansion**: Increase unit test coverage for UI components (`widgets.py`, `app.py`).
-- [ ] **Integration Tests**: Add end-to-end tests running in the actual sandbox.
+### 🧪 Testing & CI/CD
+- [x] **Coverage Expansion**: Updated and expanded unit tests for UI components and core logic.
+- [x] **Integration Tests**: Added end-to-end tests that run within the persistent Docker sandbox.
+- [x] **CI/CD Pipeline**: Added GitHub Actions workflow for automated testing.
 
 ---
 

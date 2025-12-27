@@ -81,7 +81,8 @@ class WriteFileTool(Tool):
         if self.sandbox:
             safe_content = content.replace("'", "'\\''")
             dir_path = os.path.dirname(file_path)
-            cmd = f"mkdir -p '{dir_path}' && printf '%s' '{safe_content}' > '{file_path}'"
+            mkdir_cmd = f"mkdir -p '{dir_path}' && " if dir_path else ""
+            cmd = f"{mkdir_cmd}printf '%s' '{safe_content}' > '{file_path}'"
             return await self.sandbox.exec(cmd) or f"Successfully wrote to {file_path} in sandbox."
         try:
             return await asyncio.to_thread(self._sync_write_file, file_path, content)
