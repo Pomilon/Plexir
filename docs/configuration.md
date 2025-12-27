@@ -48,3 +48,18 @@ You can manage your providers without leaving the TUI using slash commands:
 ```bash
 /config reorder "Groq Backup" up
 ```
+
+## Economics & Budgeting
+
+Plexir tracks real-time token usage and estimates costs based on the active provider's pricing. 
+
+### Set a session budget
+To prevent unexpected costs during long sessions, you can set a maximum dollar amount for the current session. If exceeded, Plexir will stop generating and notify you.
+```bash
+/config budget 0.50
+```
+*Set to `0` to disable the limit.*
+
+### View current usage
+Usage metrics (Tokens and Estimated Cost) are always visible in the **System Status** sidebar.
+

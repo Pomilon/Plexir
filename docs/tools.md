@@ -32,9 +32,18 @@ Plexir agents are equipped with a powerful set of tools to interact with the sys
 
 ## MCP & Extensibility
 
-| Tool | Description | Critical? |
-| :--- | :--- | :--- |
-| `mcp_<server>_resources` | List or read resources (schemas, logs, etc.) from an MCP server. | No |
+Plexir dynamically integrates with Model Context Protocol (MCP) servers.
+
+| Tool | Description |
+| :--- | :--- |
+| `mcp_<server>_resources` | List or read static resources and dynamic URI templates from the server. |
+| `mcp_<server>_prompts` | List and retrieve reusable prompt templates (expert configurations) from the server. |
+
+### How it works
+When you add an MCP server via `/config add`, Plexir automatically queries its capabilities and registers these tools if supported by the server. 
+- **Resources**: Can be database schemas, log files, or internal documentation.
+- **Prompts**: Pre-defined system instructions optimized for specific tasks like code review or documentation generation.
+
 
 ## Web & Information
 
