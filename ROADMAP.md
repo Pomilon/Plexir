@@ -38,7 +38,7 @@ We have successfully implemented the core foundation and advanced agentic capabi
 
 ---
 
-## ✅ Completed Milestones (v1.3 - In Progress)
+## ✅ Completed Milestones (v1.3)
 
 ### 🧠 Core Intelligence & UI
 - [x] **Reasoning Filtering**: Added `<think>` block parsing and collapsible reasoning widgets in the TUI.
@@ -66,6 +66,24 @@ We have successfully implemented the core foundation and advanced agentic capabi
 ### 🧠 Coherent Memory Management
 - [x] **Rolling Summarization**: Automatic background summarization of distant history when context limits are approached.
 - [x] **Context Pinning**: Manual control over history via `/session pin` to keep critical messages in focus forever.
+
+---
+
+## ✅ Completed Milestones (v1.5)
+
+### ⚡ Performance & Reliability
+- [x] **Non-Blocking I/O**: Asynchronous configuration and session saving to eliminate UI stutter.
+- [x] **Exponential Backoff**: Robust retry strategy for handling provider rate limits and transient errors.
+- [x] **Intelligent Refresh**: Optimized sidebar file-tree reloading to trigger only on file-modifying actions.
+- [x] **MCP Hardening**: Robust fallback schema generation for complex or non-standard MCP tools.
+
+### ✨ Premium UI/UX
+- [x] **Modern Aesthetic**: Completely revamped TCSS with distinct role-based styling and improved spacing.
+- [x] **Auto-Expanding Input**: Command input grows dynamically from 1 to 5 lines for a smoother experience.
+- [x] **Robust Focus**: Resolved invisible text issues and improved cursor visibility in the TUI.
+
+### 🧪 Advanced Verification
+- [x] **Robustness Test Suite**: Comprehensive testing for failover, retries, and edge-case tool behaviors.
 
 ---
 

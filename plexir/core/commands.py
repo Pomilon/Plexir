@@ -61,7 +61,7 @@ class CommandProcessor:
         elif cmd == "/config":
             return await self._config(args)
         elif cmd == "/session":
-            return self._session(args)
+            return await self._session(args)
         elif cmd == "/macro":
             return self._macro(args)
         elif cmd == "/reload":
@@ -274,7 +274,7 @@ class CommandProcessor:
 
     # --- Session Management ---
 
-    def _session(self, args: List[str]) -> str:
+    async def _session(self, args: List[str]) -> str:
         """Handles /session subcommands."""
         if not args or args[0] == "help":
             return self._session_help()
@@ -284,7 +284,7 @@ class CommandProcessor:
 
         try:
             if subcommand == "save":
-                return self.session_manager.save_session(self.app.history, sub_args[0] if sub_args else None)
+                return await self.session_manager.save_session_async(self.app.history, sub_args[0] if sub_args else None)
             elif subcommand == "load":
                 if not sub_args: return "Usage: `/session load <name>`"
                 name = sub_args[0]

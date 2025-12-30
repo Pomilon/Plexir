@@ -2,6 +2,7 @@ import json
 import os
 import datetime
 import logging
+import asyncio
 from typing import List, Dict, Any, Optional
 
 logger = logging.getLogger(__name__)
@@ -16,14 +17,17 @@ class SessionManager:
     def _get_session_path(self, session_name: str) -> str:
         return os.path.join(SESSION_DIR, f"{session_name}.json")
 
+    def _write_session_file(self, file_path: str, history: List[Dict[str, Any]]):
+        with open(file_path, "w", encoding="utf-8") as f:
+            json.dump(history, f, indent=2)
+
     def save_session(self, history: List[Dict[str, Any]], session_name: Optional[str] = None) -> str:
         if session_name is None:
             session_name = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
         
         file_path = self._get_session_path(session_name)
         try:
-            with open(file_path, "w", encoding="utf-8") as f:
-                json.dump(history, f, indent=2)
+            self._write_session_file(file_path, history)
             self.current_session_file = file_path
             logger.info(f"Session '{session_name}' saved to {file_path}")
             return f"Session saved as '{session_name}'."
@@ -33,6 +37,21 @@ class SessionManager:
         except Exception as e:
             logger.error(f"Unexpected error saving session '{session_name}': {e}")
             return f"Error: An unexpected error occurred while saving session '{session_name}'. Details: {e}"
+
+    async def save_session_async(self, history: List[Dict[str, Any]], session_name: Optional[str] = None) -> str:
+        if session_name is None:
+            session_name = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        
+        file_path = self._get_session_path(session_name)
+        try:
+            loop = asyncio.get_running_loop()
+            await loop.run_in_executor(None, self._write_session_file, file_path, history)
+            self.current_session_file = file_path
+            logger.info(f"Session '{session_name}' saved asynchronously to {file_path}")
+            return f"Session saved as '{session_name}'."
+        except Exception as e:
+            logger.error(f"Async save failed: {e}")
+            return f"Error saving session: {e}"
 
     def load_session(self, session_name: str) -> List[Dict[str, Any]]:
         file_path = self._get_session_path(session_name)

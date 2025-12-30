@@ -203,7 +203,7 @@ Available Tools:
                 turn_prompt = f"{turn_prompt}\n\n[CONTEXT RESTORED]:\n{distilled}"
 
             # Inner loop: Retry transient errors
-            max_retries = 20
+            max_retries = 10
             for attempt in range(max_retries + 1):
                 try:
                     first_chunk = True
@@ -233,12 +233,14 @@ Available Tools:
 
                 except Exception as e:
                     if is_retryable_error(e) and attempt < max_retries:
-                        wait_time = 2
+                        # Exponential backoff: 1s, 2s, 4s, 8s, 16s... capped at 30s
+                        wait_time = min(2 ** attempt, 30)
                         yield RouterEvent(RouterEvent.RETRY, data={
                             "provider": provider.name,
                             "attempt": attempt + 1,
                             "max": max_retries,
-                            "error": str(e)
+                            "error": str(e),
+                            "wait": wait_time
                         })
                         await asyncio.sleep(wait_time)
                         continue # Retry same provider

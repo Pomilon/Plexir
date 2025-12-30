@@ -15,7 +15,7 @@ Screen {
 #header {
     dock: top;
     height: 1;
-    background: $background;
+    background: $surface;
     color: $primary;
     text-align: center;
     text-style: bold;
@@ -29,7 +29,7 @@ Screen {
 /* Sidebar */
 #sidebar {
     dock: left;
-    width: 30;
+    width: 32;
     height: 100%;
     background: $surface;
     border-right: solid $divider;
@@ -37,7 +37,7 @@ Screen {
 }
 
 #sidebar.-hidden {
-    margin-left: -30;
+    margin-left: -32;
 }
 
 .sidebar-header {
@@ -52,7 +52,7 @@ Screen {
 /* Stats Panel */
 StatsPanel {
     height: auto;
-    padding: 1;
+    padding: 1 2;
     background: $surface;
     border-bottom: solid $divider;
 }
@@ -64,7 +64,8 @@ StatsPanel {
 
 .stat-label {
     color: $boost;
-    width: 8;
+    width: 10;
+    text-style: bold;
 }
 
 .stat-value {
@@ -75,6 +76,7 @@ StatsPanel {
 
 .success-text {
     color: $success;
+    text-style: bold;
 }
 
 /* File Tree */
@@ -82,12 +84,12 @@ WorkspaceTree {
     width: 100%;
     height: 1fr;
     background: $surface;
-    padding: 1;
 }
 
 DirectoryTree {
     background: $surface;
     border: none;
+    padding: 1;
 }
 
 DirectoryTree:focus {
@@ -108,7 +110,7 @@ DirectoryTree:focus {
 #chat-scroll {
     width: 1fr;
     height: 1fr;
-    padding: 1 2;
+    padding: 1 0; /* Removing horizontal padding here to let bubbles expand */
     scrollbar-color: $primary;
     scrollbar-size: 1 1;
 }
@@ -116,14 +118,25 @@ DirectoryTree:focus {
 .welcome-msg {
     text-align: center;
     color: $boost;
-    margin-top: 4;
+    margin-top: 5;
+    text-style: italic;
+}
+
+.failover-warning {
+    color: $warning;
+    text-align: center;
+    background: $panel;
+    padding: 1;
+    margin: 1 2;
+    border: solid $warning;
 }
 
 /* Message Bubbles */
 MessageBubble {
     height: auto;
     margin-bottom: 2;
-    padding: 0;
+    padding: 0 2;
+    layout: vertical;
 }
 
 .message-header {
@@ -151,35 +164,53 @@ MessageBubble {
 MessageContent {
     background: $background;
     color: $foreground;
-    padding-left: 1;
-    border-left: solid $divider;
+    padding: 1 2;
+    border-left: thick $divider;
     margin-left: 0;
+    margin-top: 0;
+}
+
+.message-user MessageContent {
+    border-left: thick $primary;
+}
+
+.message-model MessageContent {
+    border-left: thick $secondary;
+}
+
+.message-system MessageContent {
+    border-left: thick $warning;
 }
 
 /* Input Area */
 #input-container {
-    height: 6;
-    padding: 0;
-    background: $background;
+    height: 5;
+    padding: 0 2;
+    background: $surface;
     border-top: solid $divider;
 }
 
 TextArea {
     height: 100%;
+    min-height: 3;
     background: $panel;
     border: none;
     color: $foreground;
 }
 
 TextArea:focus {
-    border: none;
+    border: solid $primary;
+}
+
+TextArea > .text-area--cursor-line {
+    background: $surface;
 }
 
 /* Tool Status Overlay */
 ToolStatus {
     height: 1;
     width: 100%;
-    background: $primary;
+    background: $boost;
     color: $background;
     display: none;
     text-align: center;
@@ -193,14 +224,14 @@ ToolStatus {
 /* Settings Modal */
 SettingsScreen {
     align: center middle;
-    background: rgba(0,0,0,0.6);
+    background: rgba(0,0,0,0.7);
 }
 
 #settings-dialog {
     width: 60;
     height: auto;
     background: $surface;
-    border: solid $primary;
+    border: thick $primary;
     padding: 1 2;
 }
 
@@ -210,6 +241,8 @@ SettingsScreen {
     margin-top: 1;
     margin-bottom: 1;
     text-align: center;
+    background: $panel;
+    padding: 0 1;
 }
 
 Button {
@@ -218,6 +251,7 @@ Button {
     background: $primary;
     color: $background;
     border: none;
+    text-style: bold;
 }
 
 Button:hover {
@@ -227,15 +261,15 @@ Button:hover {
 /* Confirmation Modal */
 ConfirmToolCall {
     align: center middle;
-    background: rgba(0,0,0,0.6);
+    background: rgba(0,0,0,0.8);
 }
 
 #confirm-modal {
-    width: 80%;
+    width: 70%;
     height: auto;
     max-height: 80%;
     background: $surface;
-    border: solid $warning;
+    border: thick $warning;
     padding: 1 2;
     overflow-y: auto;
 }
@@ -245,10 +279,11 @@ ConfirmToolCall {
     padding: 1;
     margin-top: 1;
     color: $foreground;
+    border: solid $boost;
 }
 
 #confirm-buttons {
-    margin-top: 1;
+    margin-top: 2;
     height: 3;
 }
 
@@ -256,6 +291,7 @@ ConfirmToolCall {
     width: 1fr;
     background: $success;
     margin-right: 1;
+    color: $background;
 }
 
 #skip-btn {
@@ -267,20 +303,21 @@ ConfirmToolCall {
 #stop-btn {
     width: 1fr;
     background: $error;
+    color: $background;
 }
 
 /* Tool Output */
 ToolOutput {
     background: $panel;
-    border: solid $primary;
-    margin: 1 0;
+    border-left: thick $accent;
+    margin: 1 0 1 0;
     padding: 0;
     height: auto;
 }
 
 .tool-header {
     background: $boost;
-    color: $foreground;
+    color: $background;
     padding: 0 1;
     text-style: bold;
     width: 100%;
@@ -291,9 +328,23 @@ ToolOutput {
     text-style: italic;
     border-bottom: solid $divider;
     padding: 0 1;
-    margin-top: 0;
+    background: $surface;
 }
 
 .tool-result {
-    padding: 0 1;
+    padding: 1;
+    color: $foreground;
+}
+
+/* Collapsible Reasoning */
+Collapsible {
+    border-left: thick $boost;
+    margin: 1 0;
+    padding-left: 1;
+    color: $boost;
+}
+
+CollapsibleTitle {
+    color: $boost;
+    text-style: italic;
 }

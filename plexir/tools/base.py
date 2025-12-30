@@ -31,8 +31,12 @@ class Tool(ABC):
             }
         }
         
-        # Simple reflection on Pydantic schema
-        model_schema = self.args_schema.model_json_schema()
+        # Handle cases where args_schema is None (e.g., dynamic MCP tools)
+        if hasattr(self, 'args_schema') and self.args_schema:
+            model_schema = self.args_schema.model_json_schema()
+        else:
+            model_schema = getattr(self, 'args_schema_raw', {"properties": {}, "required": []})
+
         properties = model_schema.get("properties", {})
         required = model_schema.get("required", [])
 
@@ -69,12 +73,17 @@ class Tool(ABC):
     @property
     def to_openai_schema(self) -> Dict[str, Any]:
         """Converts the tool definition to OpenAI/Groq function format."""
+        if hasattr(self, 'args_schema') and self.args_schema:
+            parameters = self.args_schema.model_json_schema()
+        else:
+            parameters = getattr(self, 'args_schema_raw', {"type": "object", "properties": {}})
+
         return {
             "type": "function",
             "function": {
                 "name": self.name,
                 "description": self.description,
-                "parameters": self.args_schema.model_json_schema(),
+                "parameters": parameters,
             }
         }
 

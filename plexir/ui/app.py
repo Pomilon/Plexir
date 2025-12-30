@@ -231,7 +231,23 @@ class PlexirApp(App):
                 event.stop()
                 self.action_submit()
 
-    # --- Queue Processing ---
+    @on(TextArea.Changed, "#user-input")
+    def on_input_changed(self, event: TextArea.Changed) -> None:
+        """Adjusts the input height based on the number of lines."""
+        text_area = event.text_area
+        # Calculate lines. If empty, count as 1.
+        line_count = len(text_area.text.split("\n"))
+        
+        # Base height of 5 (matching old min-height) + dynamic growth
+        # 1 line -> 5 height
+        # 2 lines -> 6 height
+        # ...
+        # 5+ lines -> 9 height (capped)
+        new_height = min(line_count, 5) + 4
+        
+        input_container = self.query_one("#input-container")
+        input_container.styles.height = new_height
+
 
     @work(exclusive=True)
     async def process_queue(self):
@@ -477,10 +493,13 @@ class PlexirApp(App):
                             tool_status.set_status(f"EXECUTING: {tool_name}", running=True)
                             result = await self.router.providers[self.router.active_provider_index].execute_tool(tool_name, args)
                         
-                        try:
-                            self.query_one("#file-tree", DirectoryTree).reload()
-                        except Exception:
-                            pass 
+                        # Optimize: Only reload file tree for modifying tools
+                        modifying_prefixes = ("write", "edit", "git", "run_shell", "python_sandbox")
+                        if tool_name.startswith(modifying_prefixes):
+                            try:
+                                self.query_one("#file-tree", DirectoryTree).reload()
+                            except Exception:
+                                pass 
 
                         tool_widget = ToolOutput(tool_name, str(args), str(result))
                         await model_bubble.mount(tool_widget)

@@ -6,6 +6,7 @@ Handles persistence of provider settings, application preferences, and macros.
 import json
 import logging
 import os
+import asyncio
 from typing import List, Dict, Any, Optional
 from pydantic import BaseModel, Field, ValidationError
 
@@ -64,14 +65,28 @@ class ConfigManager:
             self.config = AppConfig()
             self.save()
 
+    def _write_config_file(self, content: str):
+        """Helper to write config to file."""
+        with open(CONFIG_FILE, "w", encoding="utf-8") as f:
+            f.write(content)
+
     def save(self):
         """Persists the current configuration to disk."""
         self.ensure_config_dir()
         try:
-            with open(CONFIG_FILE, "w", encoding="utf-8") as f:
-                f.write(self.config.model_dump_json(indent=4))
+            self._write_config_file(self.config.model_dump_json(indent=4))
         except Exception as e:
             logger.error(f"Config save failed: {e}")
+
+    async def save_async(self):
+        """Persists the current configuration to disk asynchronously."""
+        self.ensure_config_dir()
+        try:
+            loop = asyncio.get_running_loop()
+            content = self.config.model_dump_json(indent=4)
+            await loop.run_in_executor(None, self._write_config_file, content)
+        except Exception as e:
+            logger.error(f"Config save async failed: {e}")
 
     def get_provider_config(self, name: str) -> Optional[ProviderConfig]:
         """Retrieves a provider configuration by name."""
