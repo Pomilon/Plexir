@@ -2,25 +2,29 @@
 
 ## Supported Versions
 
-We currently support the following versions of Plexir with security updates:
+Plexir follows a rolling release model. We only provide security updates for the **latest available version**. Users are strongly encouraged to always upgrade to the most recent release to ensure their environment is secure.
 
-| Version | Supported          |
-| ------- | ------------------ |
-| 1.x.x   | :white_check_mark: |
-| < 1.0   | :x:                |
+| Version | Supported | Notes |
+| :--- | :--- | :--- |
+| **Latest** | ✅ | Please upgrade to the newest release immediately. |
+| Older | ❌ | Older versions are not patched. |
 
 ## Reporting a Vulnerability
 
-We take the security of Plexir seriously. If you believe you have found a security vulnerability, please report it to us by following these steps:
+We take the security of Plexir seriously. If you believe you have found a security vulnerability, please follow the **Responsible Disclosure** process:
 
-1. **Do not open a public issue.** This could expose users to risk.
-2. Email your report to **pomilon@proton.me**.
-3. Include as much detail as possible, including steps to reproduce the vulnerability.
+1.  **Do NOT open a public issue.** This prevents the vulnerability from being exploited before a fix is ready.
+2.  Email your report privately to **pomilon@proton.me**.
+3.  Please include:
+    - A description of the vulnerability.
+    - Steps to reproduce the issue (POC).
+    - Any relevant logs or configuration details.
 
-### What to expect
+### Our Response Process
 
-- We will acknowledge receipt of your report within 48 hours.
-- We will provide an estimated timeframe for a fix.
-- We will notify you once the vulnerability is patched.
+1.  **Acknowledgement:** We will acknowledge receipt of your report within **48 hours**.
+2.  **Assessment:** We will evaluate the severity and impact of the issue.
+3.  **Resolution:** We will work on a patch and release a new version as soon as possible.
+4.  **Notification:** We will notify you once the fix is released.
 
 Thank you for helping keep Plexir secure!
