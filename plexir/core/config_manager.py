@@ -23,14 +23,22 @@ class ProviderConfig(BaseModel):
     model_name: str
     base_url: Optional[str] = None
 
+class MCPServerConfig(BaseModel):
+    """Configuration for a generic MCP server (std-io)."""
+    command: str = Field(..., description="The executable command (e.g. 'node', 'python').")
+    args: List[str] = Field(default_factory=list, description="List of arguments.")
+    env: Dict[str, str] = Field(default_factory=dict, description="Environment variables.")
+    disabled: bool = Field(False, description="Whether this server is disabled.")
+
 class AppConfig(BaseModel):
     """Top-level application configuration."""
     providers: List[ProviderConfig] = [
-        ProviderConfig(name="Gemini Primary", type="gemini", model_name="gemini-3-flash-preview"),
+        ProviderConfig(name="Gemini Primary", type="gemini", model_name="gemini-3-flash"),
         ProviderConfig(name="Gemini Fallback", type="gemini", model_name="gemini-2.5-flash"),
         ProviderConfig(name="Groq Backup", type="groq", model_name="openai/gpt-oss-120b"),
     ]
     active_provider_order: List[str] = ["Gemini Primary", "Gemini Fallback", "Groq Backup"]
+    mcp_servers: Dict[str, MCPServerConfig] = Field(default_factory=dict, description="Configured MCP servers.")
     theme: str = "tokyo-night"
     debug_mode: bool = False
     session_budget: float = 0.0 # 0.0 means no limit

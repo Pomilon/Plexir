@@ -10,7 +10,7 @@ import os
 from typing import Dict, Any, List, Optional, Union
 from subprocess import SubprocessError
 
-from plexir.core.config_manager import config_manager, ProviderConfig
+from plexir.core.config_manager import config_manager, MCPServerConfig
 from plexir.tools.base import Tool, ToolRegistry
 from pydantic import BaseModel, Field, ValidationError
 
@@ -28,7 +28,8 @@ class MCPClient:
     A robust JSON-RPC 2.0 client for the Model Context Protocol.
     Supports stdio transport, lifecycle management, tools, and resources.
     """
-    def __init__(self, config: ProviderConfig, tool_registry: ToolRegistry):
+    def __init__(self, name: str, config: MCPServerConfig, tool_registry: ToolRegistry):
+        self.name = name
         self.config = config
         self.tool_registry = tool_registry
         self.process = None
@@ -40,23 +41,24 @@ class MCPClient:
         self.resources: List[Dict[str, Any]] = []
         self.resource_templates: List[Dict[str, Any]] = []
         self.prompts: List[Dict[str, Any]] = []
-        logger.info(f"MCP Client initialized for {config.name}.")
+        logger.info(f"MCP Client initialized for {name}.")
 
     async def connect(self):
         """Establishes connection and performs MCP handshake."""
-        if not self.config.base_url or not self.config.base_url.startswith("stdio://"):
-            logger.warning(f"MCP Client {self.config.name}: Invalid/Missing stdio URL.")
-            return
+        cmd = self.config.command
+        args = self.config.args
+        env_vars = os.environ.copy()
+        env_vars.update(self.config.env)
 
-        command_str = self.config.base_url[len("stdio://"):]
-        logger.info(f"Starting MCP server: {command_str}")
+        logger.info(f"Starting MCP server '{self.name}': {cmd} {args}")
         
         try:
             self.process = await asyncio.create_subprocess_exec(
-                *command_str.split(), 
+                cmd, *args,
                 stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE
+                stderr=asyncio.subprocess.PIPE,
+                env=env_vars
             )
             self.running = True
             self._read_task = asyncio.create_task(self._read_loop())
@@ -64,7 +66,7 @@ class MCPClient:
             
             # --- MCP Handshake ---
             # 1. Initialize
-            logger.info(f"MCP {self.config.name}: Sending initialize...")
+            logger.info(f"MCP {self.name}: Sending initialize...")
             init_result = await self.send_request("initialize", {
                 "protocolVersion": "2024-11-05", 
                 "capabilities": {
@@ -75,7 +77,7 @@ class MCPClient:
                 },
                 "clientInfo": {"name": "Plexir", "version": "1.5.0"}
             })
-            logger.info(f"MCP {self.config.name} Initialized. Server: {init_result.get('serverInfo', 'Unknown')}")
+            logger.info(f"MCP {self.name} Initialized. Server: {init_result.get('serverInfo', 'Unknown')}")
             
             # 2. Initialized Notification
             await self.send_notification("notifications/initialized")
@@ -88,10 +90,10 @@ class MCPClient:
             )
             
         except FileNotFoundError:
-            logger.error(f"MCP Client {self.config.name} failed: Command not found.")
+            logger.error(f"MCP Client {self.name} failed: Command '{cmd}' not found.")
             await self.disconnect()
         except Exception as e:
-            logger.error(f"MCP Connection failed: {e}")
+            logger.error(f"MCP Connection for {self.name} failed: {e}")
             await self.disconnect()
 
     async def refresh_tools(self):
@@ -100,9 +102,9 @@ class MCPClient:
             result = await self.send_request("tools/list")
             tools = result.get("tools", [])
             self._register_mcp_tools(tools)
-            logger.info(f"MCP {self.config.name}: Registered {len(tools)} tools.")
+            logger.info(f"MCP {self.name}: Registered {len(tools)} tools.")
         except Exception as e:
-            logger.error(f"Failed to list tools for {self.config.name}: {e}")
+            logger.error(f"Failed to list tools for {self.name}: {e}")
 
     async def refresh_resources(self):
         """Fetches resources and templates from the server."""
@@ -115,9 +117,9 @@ class MCPClient:
 
             if self.resources or self.resource_templates:
                 self._register_resource_tool()
-                logger.info(f"MCP {self.config.name}: Found {len(self.resources)} resources and {len(self.resource_templates)} templates.")
+                logger.info(f"MCP {self.name}: Found {len(self.resources)} resources and {len(self.resource_templates)} templates.")
         except Exception as e:
-            logger.debug(f"MCP {self.config.name} resources/list failed: {e}")
+            logger.debug(f"MCP {self.name} resources/list failed: {e}")
 
     async def refresh_prompts(self):
         """Fetches prompts from the server."""
@@ -126,14 +128,14 @@ class MCPClient:
             self.prompts = result.get("prompts", [])
             if self.prompts:
                 self._register_prompt_tool()
-                logger.info(f"MCP {self.config.name}: Found {len(self.prompts)} prompts.")
+                logger.info(f"MCP {self.name}: Found {len(self.prompts)} prompts.")
         except Exception as e:
-            logger.debug(f"MCP {self.config.name} prompts/list failed: {e}")
+            logger.debug(f"MCP {self.name} prompts/list failed: {e}")
 
     def _register_resource_tool(self):
         """Registers a tool that allows the agent to list and read MCP resources."""
         client = self
-        server_name = self.config.name
+        server_name = self.name
 
         class MCPResourceSchema(BaseModel):
             action: str = Field(..., description="Action: 'list' or 'read'")
@@ -177,7 +179,7 @@ class MCPClient:
     def _register_prompt_tool(self):
         """Registers a tool that allows the agent to list and use MCP prompts."""
         client = self
-        server_name = self.config.name
+        server_name = self.name
 
         class MCPPromptSchema(BaseModel):
             action: str = Field(..., description="Action: 'list' or 'get'")
@@ -261,7 +263,7 @@ class MCPClient:
             self.process.stdin.write(json_str.encode())
             await self.process.stdin.drain()
         except Exception as e:
-            logger.error(f"Write error {self.config.name}: {e}")
+            logger.error(f"Write error {self.name}: {e}")
             raise
 
     async def _read_loop(self):
@@ -279,7 +281,7 @@ class MCPClient:
                 try:
                     message = json.loads(line_str)
                 except json.JSONDecodeError:
-                    logger.warning(f"MCP {self.config.name} Non-JSON output: {line_str}")
+                    logger.warning(f"MCP {self.name} Non-JSON output: {line_str}")
                     continue
 
                 if "id" in message:
@@ -303,10 +305,10 @@ class MCPClient:
                     # logger.debug(f"MCP Notification: {method}")
 
             except Exception as e:
-                logger.error(f"Read loop error {self.config.name}: {e}")
+                logger.error(f"Read loop error {self.name}: {e}")
                 break
         
-        logger.info(f"MCP {self.config.name} read loop ended.")
+        logger.info(f"MCP {self.name} read loop ended.")
         await self.disconnect()
 
     async def _read_stderr(self):
@@ -314,7 +316,7 @@ class MCPClient:
         while self.running and self.process.stderr:
             line = await self.process.stderr.readline()
             if not line: break
-            logger.warning(f"MCP STDERR [{self.config.name}]: {line.decode().strip()}")
+            logger.warning(f"MCP STDERR [{self.name}]: {line.decode().strip()}")
 
     def _register_mcp_tools(self, tool_definitions: List[Dict[str, Any]]):
         """Dynamically creates Tool classes for MCP tools."""
@@ -393,4 +395,4 @@ class MCPClient:
                 await self.process.wait()
             except Exception:
                 pass
-        logger.info(f"MCP Client {self.config.name} disconnected.")
+        logger.info(f"MCP Client {self.name} disconnected.")
