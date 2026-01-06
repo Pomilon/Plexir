@@ -131,11 +131,38 @@ class Router:
                 elif p_config.type in ["openai", "groq", "ollama"]:
                     self.providers.append(OpenAICompatibleProvider(p_config, self.registry))
                 elif p_config.type == "mcp":
-                    mcp_client = MCPClient(p_config, self.registry)
-                    await mcp_client.connect()
-                    self.mcp_clients.append(mcp_client)
+                    # Hybrid Support: Convert legacy ProviderConfig to MCPServerConfig
+                    if p_config.base_url and p_config.base_url.startswith("stdio://"):
+                        cmd_str = p_config.base_url[len("stdio://"):]
+                        parts = cmd_str.split()
+                        if parts:
+                            from plexir.core.config_manager import MCPServerConfig
+                            # Naive split: command is parts[0], args are parts[1:]
+                            legacy_mcp_config = MCPServerConfig(
+                                command=parts[0],
+                                args=parts[1:],
+                                env={}
+                            )
+                            mcp_client = MCPClient(p_config.name, legacy_mcp_config, self.registry)
+                            await mcp_client.connect()
+                            self.mcp_clients.append(mcp_client)
+                    else:
+                        logger.warning(f"Legacy MCP provider '{p_config.name}' ignored: Invalid base_url (must start with stdio://).")
             except Exception as e:
                 logger.error(f"Failed to load provider {name}: {e}")
+
+        # Load MCP Servers
+        for name, mcp_config in config_manager.config.mcp_servers.items():
+            if mcp_config.disabled:
+                continue
+            try:
+                mcp_client = MCPClient(name, mcp_config, self.registry)
+                # We start connection in background or await it? 
+                # Ideally await to ensure tools are ready before first turn.
+                await mcp_client.connect()
+                self.mcp_clients.append(mcp_client)
+            except Exception as e:
+                logger.error(f"Failed to load MCP server '{name}': {e}")
 
     async def route(
         self, 
