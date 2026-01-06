@@ -90,7 +90,8 @@ class WriteFileTool(Tool):
             return f"Error writing file '{file_path}': {e}"
 
     def _sync_write_file(self, file_path: str, content: str) -> str:
-        os.makedirs(os.path.dirname(file_path), exist_ok=True)
+        if os.path.dirname(file_path):
+            os.makedirs(os.path.dirname(file_path), exist_ok=True)
         with open(file_path, "w", encoding="utf-8") as f:
             f.write(content)
         return f"Successfully wrote to {file_path}"
