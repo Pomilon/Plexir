@@ -7,13 +7,47 @@ import json
 import logging
 import os
 import asyncio
-from typing import List, Dict, Any, Optional
-from pydantic import BaseModel, Field, ValidationError
+import keyring
+from typing import List, Dict, Any, Optional, Literal
+from pydantic import BaseModel, Field, ValidationError, model_validator
 
 logger = logging.getLogger(__name__)
 
 CONFIG_DIR = os.path.expanduser("~/.plexir")
 CONFIG_FILE = os.path.join(CONFIG_DIR, "config.json")
+
+def resolve_secret(value: Optional[str]) -> Optional[str]:
+    """
+    Resolves a secret value from environment variables or keyring.
+    Formats:
+    - 'env:VAR_NAME' -> os.environ['VAR_NAME']
+    - 'keyring:username' -> keyring.get_password('plexir', 'username')
+    - 'plain_text' -> 'plain_text'
+    """
+    if not value:
+        return value
+    
+    if value.startswith("env:"):
+        var_name = value[4:]
+        return os.environ.get(var_name)
+    
+    if value.startswith("keyring:"):
+        username = value[8:]
+        try:
+            return keyring.get_password("plexir", username)
+        except Exception as e:
+            logger.error(f"Failed to access keyring for user '{username}': {e}")
+            return None
+            
+    return value
+
+def store_secret(username: str, secret: str):
+    """Stores a secret in the system keyring under service 'plexir'."""
+    try:
+        keyring.set_password("plexir", username, secret)
+    except Exception as e:
+        logger.error(f"Failed to save to keyring: {e}")
+        raise
 
 class ProviderConfig(BaseModel):
     """Configuration for an individual LLM provider."""
@@ -22,18 +56,33 @@ class ProviderConfig(BaseModel):
     api_key: Optional[str] = None
     model_name: str
     base_url: Optional[str] = None
+    auth_mode: Literal["auto", "api_key", "oauth"] = Field(
+        "auto", 
+        description="Authentication mode: 'auto', 'api_key', or 'oauth' (Gemini only)."
+    )
+    
+    def get_api_key(self) -> Optional[str]:
+        """Resolves the API key securely."""
+        return resolve_secret(self.api_key)
 
 class MCPServerConfig(BaseModel):
-    """Configuration for a generic MCP server (std-io)."""
-    command: str = Field(..., description="The executable command (e.g. 'node', 'python').")
-    args: List[str] = Field(default_factory=list, description="List of arguments.")
-    env: Dict[str, str] = Field(default_factory=dict, description="Environment variables.")
+    """Configuration for an MCP server (stdio or SSE)."""
+    command: Optional[str] = Field(None, description="The executable command (for stdio).")
+    args: List[str] = Field(default_factory=list, description="List of arguments (for stdio).")
+    env: Dict[str, str] = Field(default_factory=dict, description="Environment variables (for stdio).")
+    url: Optional[str] = Field(None, description="URL for SSE transport (e.g. http://localhost:8000/sse).")
     disabled: bool = Field(False, description="Whether this server is disabled.")
+
+    @model_validator(mode='after')
+    def check_transport(self):
+        if not self.command and not self.url:
+            raise ValueError("Either 'command' (stdio) or 'url' (sse) must be specified for MCP server.")
+        return self
 
 class AppConfig(BaseModel):
     """Top-level application configuration."""
     providers: List[ProviderConfig] = [
-        ProviderConfig(name="Gemini Primary", type="gemini", model_name="gemini-3-flash"),
+        ProviderConfig(name="Gemini Primary", type="gemini", model_name="gemini-3-flash-preview"),
         ProviderConfig(name="Gemini Fallback", type="gemini", model_name="gemini-2.5-flash"),
         ProviderConfig(name="Groq Backup", type="groq", model_name="openai/gpt-oss-120b"),
     ]
@@ -42,6 +91,32 @@ class AppConfig(BaseModel):
     theme: str = "tokyo-night"
     debug_mode: bool = False
     session_budget: float = 0.0 # 0.0 means no limit
+    pricing: Dict[str, tuple[float, float]] = Field(
+        default_factory=lambda: {
+            # --- Google Gemini Series (2026 Standards) ---
+            "gemini-3-pro-preview": (2.00, 12.00),
+            "gemini-3-flash-preview": (0.50, 3.00),
+            "gemini-2.5-pro": (1.25, 10.00),
+            "gemini-2.5-flash": (0.15, 0.60),
+            "gemini-2.5-flash-lite": (0.10, 0.40),
+            
+            # --- Anthropic Claude 4.5 Series ---
+            "claude-4.5-sonnet": (3.00, 15.00),
+            "claude-4.5-haiku": (1.00, 5.00),
+            "claude-4-opus": (15.00, 75.00), # Legacy / Specialist
+            
+            # --- OpenAI Series ---
+            "gpt-4o": (2.50, 10.00),
+            "gpt-4o-mini": (0.15, 0.60),
+            "gpt-oss-120b": (0.15, 0.60), # Groq Optimized
+            
+            # --- Specialized / Reasoning ---
+            "deepseek-v3": (0.27, 1.10),
+            "deepseek-reasoner": (0.55, 2.19),
+            "llama-3.3-70b-versatile": (0.59, 0.79),
+        },
+        description="Pricing map: model -> (prompt_price, completion_price) per 1M tokens."
+    )
     macros: Dict[str, List[str]] = Field(default_factory=dict)
     tool_configs: Dict[str, Dict[str, str]] = Field(default_factory=dict)
 
@@ -77,6 +152,11 @@ class ConfigManager:
         """Helper to write config to file."""
         with open(CONFIG_FILE, "w", encoding="utf-8") as f:
             f.write(content)
+        # Secure the file
+        try:
+            os.chmod(CONFIG_FILE, 0o600)
+        except Exception:
+            pass
 
     def save(self):
         """Persists the current configuration to disk."""
@@ -182,7 +262,8 @@ class ConfigManager:
         self.save()
 
     def get_tool_config(self, tool_domain: str, key: str) -> Optional[str]:
-        """Retrieves a tool configuration value."""
-        return self.config.tool_configs.get(tool_domain, {}).get(key)
+        """Retrieves a tool configuration value with secret resolution."""
+        val = self.config.tool_configs.get(tool_domain, {}).get(key)
+        return resolve_secret(val)
 
 config_manager = ConfigManager()

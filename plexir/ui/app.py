@@ -8,6 +8,7 @@ import logging
 import os
 import time
 from typing import List, Dict, Any, Optional
+import subprocess
 
 from textual.app import App, ComposeResult
 from textual.widgets import Label, Static, Footer, DirectoryTree, Collapsible, LoadingIndicator, TextArea
@@ -17,7 +18,7 @@ from textual import work, on, events
 
 from plexir.ui.widgets import MessageContent, ToolStatus, StatsPanel, MessageBubble, ToolOutput
 from plexir.ui.app_layout import compose_main_layout
-from plexir.ui.screens import ConfirmToolCall
+from plexir.ui.screens import ConfirmToolCall, SandboxSyncScreen
 from plexir.core.router import Router, RouterEvent
 from plexir.core.commands import CommandProcessor
 from plexir.core.config_manager import config_manager
@@ -91,17 +92,22 @@ class PlexirApp(App):
         ("ctrl+enter", "submit", "Submit"),
     ]
 
-    def __init__(self, sandbox_enabled: bool = False):
+    def __init__(self, sandbox_enabled: bool = False, mount_cwd: bool = False, yolo_mode: bool = False):
         super().__init__()
         self.register_theme(self.TOKYO_NIGHT)
         self.register_theme(self.HACKER)
         self.register_theme(self.PLEXIR_LIGHT)
         
-        self.router = Router(sandbox_enabled=sandbox_enabled)
+        self.router = Router(sandbox_enabled=sandbox_enabled, mount_cwd=mount_cwd)
         self.session_manager = SessionManager()
         self.command_processor = CommandProcessor(self, self.session_manager)
         self.history: List[Dict[str, Any]] = []
         self.generation_worker = None
+        
+        # Modes
+        self.yolo_mode = yolo_mode
+        if self.yolo_mode:
+            logger.info("YOLO Mode enabled: HITL disabled.")
         
         # Macro state
         self.is_recording_macro = False
@@ -173,16 +179,68 @@ class PlexirApp(App):
         else:
             self.action_quit()
 
-    async def action_quit(self):
-        """Cleanly exits the application, stopping any background sandboxes."""
+    def action_quit(self):
+        """Triggers the exit sequence."""
+        self.handle_exit()
+
+    @work
+    async def handle_exit(self):
+        """Cleanly exits the application, handling sandbox sync/stop."""
         if self.router.sandbox:
+            # If in Clone Mode, prompt user to sync/export
+            if not self.router.mount_cwd:
+                action = await self.push_screen_wait(SandboxSyncScreen())
+                
+                if action == "cancel":
+                    self.notify("Exit cancelled.")
+                    return
+                
+                elif action == "sync_cwd":
+                    self.notify("Syncing sandbox to current directory...")
+                    try:
+                        await self.router.sandbox.export_workspace(os.getcwd())
+                        self.notify("Sync complete.", severity="information")
+                    except Exception as e:
+                        self.notify(f"Sync failed: {e}", severity="error")
+                        return
+                
+                elif action.startswith("export:"):
+                    path = action.split(":", 1)[1]
+                    self.notify(f"Exporting sandbox to {path}...")
+                    try:
+                        await self.router.sandbox.export_workspace(path)
+                        self.notify("Export complete.", severity="information")
+                    except Exception as e:
+                        self.notify(f"Export failed: {e}", severity="error")
+                        return
+
             self.notify("Stopping sandbox container...")
             await self.router.sandbox.stop()
+            
         self.exit()
 
     def action_focus_input(self):
         """Focuses the main command input."""
         self.query_one("#user-input", TextArea).focus()
+
+    async def action_run_interactive(self, command: List[str]) -> int:
+        """Runs a command in the terminal, suspending the TUI."""
+        with self.suspend():
+            # Clear screen
+            print("\033[H\033[J", end="")
+            print(f"Running: {' '.join(command)}")
+            try:
+                # Use synchronous subprocess.run because TUI loop is paused
+                result = subprocess.run(command)
+                return_code = result.returncode
+            except FileNotFoundError:
+                print(f"Error: Command not found: {command[0]}")
+                return_code = 127
+            except KeyboardInterrupt:
+                print("\nAborted by user.")
+                return_code = 130
+            
+            return return_code
 
     def action_copy_last_response(self):
         """Copies the content of the last AI message to the clipboard."""
@@ -472,23 +530,27 @@ class PlexirApp(App):
                         
                         tool_instance = self.router.get_tool(tool_name)
                         if tool_instance and tool_instance.is_critical:
-                            tool_status.set_status(f"WAITING FOR CONFIRMATION: {tool_name}", running=False)
-                            # ConfirmToolCall returns: "confirm", "skip", "stop"
-                            action = await self.push_screen_wait(ConfirmToolCall(tool_name, args))
-                            
-                            if action == "stop":
-                                tool_status.set_status("Stopped", running=False)
-                                current_text_widget.update(current_text_buffer + "\n\n[Stopped by User]")
-                                stats.status = "Idle"
-                                return # Exit generation loop
-                            
-                            elif action == "skip":
-                                result = "Action skipped by user."
-                                tool_status.set_status("Skipped", running=False)
-                            
-                            else: # "confirm"
-                                tool_status.set_status(f"EXECUTING: {tool_name}", running=True)
+                            if self.yolo_mode:
+                                tool_status.set_status(f"YOLO: EXECUTING {tool_name}", running=True)
                                 result = await self.router.providers[self.router.active_provider_index].execute_tool(tool_name, args)
+                            else:
+                                tool_status.set_status(f"WAITING FOR CONFIRMATION: {tool_name}", running=False)
+                                # ConfirmToolCall returns: "confirm", "skip", "stop"
+                                action = await self.push_screen_wait(ConfirmToolCall(tool_name, args))
+                                
+                                if action == "stop":
+                                    tool_status.set_status("Stopped", running=False)
+                                    current_text_widget.update(current_text_buffer + "\n\n[Stopped by User]")
+                                    stats.status = "Idle"
+                                    return # Exit generation loop
+                                
+                                elif action == "skip":
+                                    result = "Action skipped by user."
+                                    tool_status.set_status("Skipped", running=False)
+                                
+                                else: # "confirm"
+                                    tool_status.set_status(f"EXECUTING: {tool_name}", running=True)
+                                    result = await self.router.providers[self.router.active_provider_index].execute_tool(tool_name, args)
                         else:
                             tool_status.set_status(f"EXECUTING: {tool_name}", running=True)
                             result = await self.router.providers[self.router.active_provider_index].execute_tool(tool_name, args)
@@ -604,9 +666,9 @@ class PlexirApp(App):
             stats.status = "Error"
             self.refresh()
 
-def run(sandbox_enabled: bool = False):
+def run(sandbox_enabled: bool = False, mount_cwd: bool = False, yolo_mode: bool = False):
     """Entry point to start the Plexir TUI application."""
-    app = PlexirApp(sandbox_enabled=sandbox_enabled)
+    app = PlexirApp(sandbox_enabled=sandbox_enabled, mount_cwd=mount_cwd, yolo_mode=yolo_mode)
     app.run()
 
 if __name__ == "__main__":

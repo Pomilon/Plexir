@@ -8,11 +8,15 @@ from plexir.core.context import get_messages_to_summarize
 @pytest.mark.asyncio
 async def test_token_tracking_and_cost():
     """Verify that Router correctly tracks tokens and calculates costs."""
+    from plexir.core.config_manager import config_manager
+    # Set explicit rates for predictability
+    config_manager.config.pricing["mock-model"] = (0.10, 0.40)
+    
     router = Router()
     # Mock a provider that yields usage data
     class MockUsageProvider:
         name = "MockUsage"
-        model_name = "gemini-2.0-flash" # 0.10 input, 0.40 output per 1M
+        model_name = "mock-model" 
         async def generate(self, h, s):
             yield {
                 "type": "usage",
@@ -23,12 +27,12 @@ async def test_token_tracking_and_cost():
             yield "Done"
 
     router.providers = [MockUsageProvider()]
-    
+
     events = []
     async for chunk in router.route([]):
         if isinstance(chunk, RouterEvent) and chunk.type == RouterEvent.USAGE:
             events.append(chunk)
-            
+
     assert router.session_usage["prompt_tokens"] == 1000000
     assert router.session_usage["completion_tokens"] == 1000000
     # 1M prompt ($0.10) + 1M completion ($0.40) = $0.50

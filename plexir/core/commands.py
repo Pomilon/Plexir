@@ -5,6 +5,8 @@ Handles user-entered commands starting with '/'.
 
 import asyncio
 import shlex
+import os
+import sys
 from typing import List, Optional
 from plexir.core.config_manager import config_manager, ProviderConfig
 from plexir.core.session import SessionManager
@@ -64,6 +66,10 @@ class CommandProcessor:
             return await self._session(args)
         elif cmd == "/macro":
             return self._macro(args)
+        elif cmd == "/auth":
+            return await self._auth(args)
+        elif cmd == "/yolo":
+            return self._yolo(args)
         elif cmd == "/reload":
             await self.app.action_reload_providers()
             return "Providers reloaded from config."
@@ -81,6 +87,7 @@ class CommandProcessor:
 - `/clear`: Clear the session history.
 - `/tools`: List available tools.
 - `/config [subcommand]`: Manage application settings.
+- `/auth [subcommand]`: Manage Google OAuth (ADC).
 - `/session [subcommand]`: Manage conversation sessions.
 - `/macro [subcommand]`: Manage user input macros.
 - `/reload`: Reload LLM providers from configuration.
@@ -93,6 +100,106 @@ class CommandProcessor:
         self.session_manager.current_session_file = None
         self.app.router.reset_provider()
         return "Session history cleared."
+
+    # --- Auth Management ---
+
+    async def _auth(self, args: List[str]) -> str:
+        """Handles /auth subcommands for Google OAuth."""
+        if not args or args[0] == "help":
+            return self._auth_help()
+        
+        subcommand = args[0].lower()
+        
+        if subcommand == "login":
+            return (
+                "⚠️ **Authentication Required**\n\n"
+                "To authenticate with Google and unlock high quotas (1000 req/day):\n"
+                "1. Open a **NEW** terminal window.\n"
+                "2. Run this command:\n"
+                f"`{sys.executable} -m plexir.auth_helper`\n"
+                "3. Follow the browser instructions to log in.\n"
+                "4. Return here and run: `/reload`."
+            )
+
+        elif subcommand == "status":
+            adc_path = os.path.expanduser("~/.config/gcloud/application_default_credentials.json")
+            standalone_path = os.path.expanduser("~/.plexir/oauth_creds.json")
+            gemini_cli_path = os.path.expanduser("~/.gemini/oauth_creds.json")
+            
+            msg = "**Authentication Status:**\n"
+            if os.path.exists(standalone_path):
+                msg += f"- ✅ Standalone Credentials: `{standalone_path}`\n"
+            if os.path.exists(gemini_cli_path):
+                msg += f"- ✅ Gemini CLI Credentials: `{gemini_cli_path}`\n"
+            if os.path.exists(adc_path):
+                msg += f"- ✅ ADC (gcloud) Credentials: `{adc_path}`\n"
+            
+            if "✅" not in msg:
+                return "❌ No credentials found. Run `/auth login`."
+            return msg
+        
+        elif subcommand == "project":
+            if not args:
+                return "Usage: `/auth project <PROJECT_ID>` (Sets the quota project for ADC)."
+            
+            project_id = args[0]
+            cmd = ["gcloud", "auth", "application-default", "set-quota-project", project_id]
+            try:
+                ret_code = await self.app.action_run_interactive(cmd)
+                if ret_code == 0:
+                    return f"✅ Quota project set to '{project_id}'."
+                else:
+                    return f"❌ Failed to set quota project (Code {ret_code})."
+            except Exception as e:
+                return f"Error: {e}"
+
+        else:
+            return f"Unknown subcommand: {subcommand}"
+
+    def _auth_help(self) -> str:
+        return """
+**`/auth` Commands:**
+- `/auth login`: Show instructions for authentication.
+- `/auth status`: Check for existing credentials.
+- `/auth project <id>`: Set the quota project for ADC (Vertex).
+"""
+
+    def _auth_help(self) -> str:
+        return """
+**`/auth` Commands:**
+- `/auth login`: Authenticate with Google. 
+  - (Priority 1) Uses `~/.plexir/client_secrets.json` if present.
+  - (Priority 2) Falls back to `gcloud auth application-default login`.
+- `/auth status`: Check for existing credentials.
+"""
+
+    # --- YOLO Mode ---
+
+    def _yolo(self, args: List[str]) -> str:
+        """Handles /yolo subcommands."""
+        if not args or args[0] == "help":
+            return self._yolo_help()
+        
+        subcommand = args[0].lower()
+        if subcommand == "start":
+            self.app.yolo_mode = True
+            return "🚀 YOLO Mode ENABLED. HITL confirmations disabled. Be careful!"
+        elif subcommand == "stop":
+            self.app.yolo_mode = False
+            return "🛑 YOLO Mode DISABLED. HITL confirmations re-enabled."
+        elif subcommand == "status":
+            state = "ENABLED" if self.app.yolo_mode else "DISABLED"
+            return f"YOLO Mode is currently **{state}**."
+        else:
+            return f"Unknown subcommand: {subcommand}"
+
+    def _yolo_help(self) -> str:
+        return """
+**`/yolo` Commands:**
+- `/yolo start`: Enable YOLO mode (disable safety checks).
+- `/yolo stop`: Disable YOLO mode (enable safety checks).
+- `/yolo status`: Check status.
+"""
 
     def _tools(self) -> str:
         """Lists all registered tools."""
@@ -214,6 +321,10 @@ class CommandProcessor:
              if value not in ("gemini", "openai", "groq", "ollama", "mcp"):
                  return f"Error: Invalid type '{value}'."
              p_config.type = value
+        elif key == "auth_mode":
+            if value not in ("auto", "api_key", "oauth"):
+                return f"Error: Invalid auth_mode '{value}'. Use: auto, api_key, oauth."
+            p_config.auth_mode = value
         else:
             return f"Error: Unknown property '{key}'."
         

@@ -32,9 +32,19 @@ def main():
         action="store_true", 
         help="Enable persistent Docker sandbox for all tool executions."
     )
+    parser.add_argument(
+        "--mount", 
+        action="store_true", 
+        help="Mount current directory to sandbox (requires --sandbox). Default: Clone mode."
+    )
+    parser.add_argument(
+        "--yolo", 
+        action="store_true", 
+        help="Enable YOLO mode (disable Human-in-the-Loop confirmations)."
+    )
     args = parser.parse_args()
 
-    run(sandbox_enabled=args.sandbox)
+    run(sandbox_enabled=args.sandbox, mount_cwd=args.mount, yolo_mode=args.yolo)
 
 if __name__ == "__main__":
 

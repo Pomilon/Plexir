@@ -146,3 +146,51 @@ class CodebaseRetriever:
             
         except Exception as e:
             return f"Error parsing file: {e}"
+
+    @staticmethod
+    def generate_repo_map(root_dir: str = ".", max_depth: int = 3) -> str:
+        """
+        Generates a high-level map of the repository structure.
+        Recursively lists files and summarizes key symbols for Python files.
+        """
+        ignore_dirs = {'.git', '__pycache__', 'node_modules', 'venv', '.env', '.venv', 'dist', 'build', '.pytest_cache', '.mypy_cache', 'site-packages'}
+        output = []
+
+        for root, dirs, files in os.walk(root_dir):
+            # Modify dirs in-place to skip ignored directories
+            dirs[:] = [d for d in dirs if d not in ignore_dirs]
+            
+            level = root.replace(root_dir, '').count(os.sep)
+            if level > max_depth:
+                continue
+
+            indent = "  " * level
+            output.append(f"{indent}{os.path.basename(root)}/")
+            
+            for file in files:
+                if file.startswith('.'): continue
+                file_path = os.path.join(root, file)
+                output.append(f"{indent}  {file}")
+                
+                # Add symbol summary for python files
+                if file.endswith(".py"):
+                    try:
+                        with open(file_path, "r", encoding="utf-8") as f:
+                            tree = ast.parse(f.read())
+                        
+                        symbols = []
+                        for node in tree.body:
+                            if isinstance(node, ast.ClassDef):
+                                symbols.append(f"C:{node.name}")
+                            elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                                symbols.append(f"F:{node.name}")
+                        
+                        if symbols:
+                            # Limit symbols to keep map concise
+                            symbol_str = ", ".join(symbols[:10])
+                            if len(symbols) > 10: symbol_str += "..."
+                            output.append(f"{indent}    └─ [{symbol_str}]")
+                    except Exception:
+                        pass # Ignore parsing errors in map generation
+
+        return "\n".join(output)

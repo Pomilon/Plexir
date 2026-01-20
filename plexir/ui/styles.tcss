@@ -348,3 +348,65 @@ CollapsibleTitle {
     color: $boost;
     text-style: italic;
 }
+
+/* Sandbox Sync Modal */
+SandboxSyncScreen {
+    align: center middle;
+    background: rgba(0,0,0,0.8);
+}
+
+#sandbox-modal {
+    width: 60;
+    height: auto;
+    background: $surface;
+    border: thick $warning;
+    padding: 1 2;
+}
+
+.warning-title {
+    color: $warning;
+    text-style: bold;
+    text-align: center;
+    margin-bottom: 1;
+}
+
+#export-path-input {
+    width: 100%;
+    margin: 1 0;
+    background: $panel;
+    border: none;
+    color: $foreground;
+}
+
+#sandbox-buttons {
+    height: 3;
+    margin-top: 1;
+}
+
+#sandbox-actions {
+    height: 3;
+    margin-top: 0;
+}
+
+#btn-export {
+    width: 1fr;
+    background: $primary;
+    margin-right: 1;
+}
+
+#btn-sync {
+    width: 1fr;
+    background: $warning;
+    color: $background;
+}
+
+#btn-discard {
+    width: 1fr;
+    background: $error;
+    margin-right: 1;
+}
+
+#btn-cancel {
+    width: 1fr;
+    background: $boost;
+}

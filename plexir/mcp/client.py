@@ -9,6 +9,7 @@ import logging
 import os
 from typing import Dict, Any, List, Optional, Union
 from subprocess import SubprocessError
+import httpx
 
 from plexir.core.config_manager import config_manager, MCPServerConfig
 from plexir.tools.base import Tool, ToolRegistry
@@ -26,31 +27,78 @@ class JSONRPCError(Exception):
 class MCPClient:
     """
     A robust JSON-RPC 2.0 client for the Model Context Protocol.
-    Supports stdio transport, lifecycle management, tools, and resources.
+    Supports stdio and SSE (Server-Sent Events) transports.
     """
     def __init__(self, name: str, config: MCPServerConfig, tool_registry: ToolRegistry):
         self.name = name
         self.config = config
         self.tool_registry = tool_registry
-        self.process = None
+        
+        # State
         self.running = False
+        self.transport_type = "stdio" if self.config.command else "sse"
+        
+        # Stdio specific
+        self.process = None
+        
+        # SSE specific
+        self.sse_session: Optional[httpx.AsyncClient] = None
+        self.sse_post_endpoint: Optional[str] = None
+        
+        # Requests
         self._request_id = 0
         self._pending_requests: Dict[int, asyncio.Future] = {}
+        
+        # Background Tasks
         self._read_task = None
         self._stderr_task = None
-        self.resources: List[Dict[str, Any]] = []
-        self.resource_templates: List[Dict[str, Any]] = []
-        self.prompts: List[Dict[str, Any]] = []
-        logger.info(f"MCP Client initialized for {name}.")
+
+        logger.info(f"MCP Client initialized for {name} ({self.transport_type}).")
 
     async def connect(self):
-        """Establishes connection and performs MCP handshake."""
+        """Establishes connection based on configuration."""
+        if self.transport_type == "stdio":
+            await self._connect_stdio()
+        else:
+            await self._connect_sse()
+
+        if self.running:
+             # --- MCP Handshake (Common) ---
+            try:
+                # 1. Initialize
+                logger.info(f"MCP {self.name}: Sending initialize...")
+                init_result = await self.send_request("initialize", {
+                    "protocolVersion": "2024-11-05", 
+                    "capabilities": {
+                        "tools": {},
+                        "resources": {},
+                        "prompts": {},
+                        "logging": {}
+                    },
+                    "clientInfo": {"name": "Plexir", "version": "1.6.0"}
+                })
+                logger.info(f"MCP {self.name} Initialized. Server: {init_result.get('serverInfo', 'Unknown')}")
+                
+                # 2. Initialized Notification
+                await self.send_notification("notifications/initialized")
+                
+                # 3. List Tools, Resources & Prompts
+                await asyncio.gather(
+                    self.refresh_tools(),
+                    self.refresh_resources(),
+                    self.refresh_prompts()
+                )
+            except Exception as e:
+                logger.error(f"MCP Handshake failed for {self.name}: {e}")
+                await self.disconnect()
+
+    async def _connect_stdio(self):
         cmd = self.config.command
         args = self.config.args
         env_vars = os.environ.copy()
         env_vars.update(self.config.env)
 
-        logger.info(f"Starting MCP server '{self.name}': {cmd} {args}")
+        logger.info(f"Starting MCP server '{self.name}' (stdio): {cmd} {args}")
         
         try:
             self.process = await asyncio.create_subprocess_exec(
@@ -61,39 +109,44 @@ class MCPClient:
                 env=env_vars
             )
             self.running = True
-            self._read_task = asyncio.create_task(self._read_loop())
-            self._stderr_task = asyncio.create_task(self._read_stderr())
-            
-            # --- MCP Handshake ---
-            # 1. Initialize
-            logger.info(f"MCP {self.name}: Sending initialize...")
-            init_result = await self.send_request("initialize", {
-                "protocolVersion": "2024-11-05", 
-                "capabilities": {
-                    "tools": {},
-                    "resources": {},
-                    "prompts": {},
-                    "logging": {}
-                },
-                "clientInfo": {"name": "Plexir", "version": "1.5.0"}
-            })
-            logger.info(f"MCP {self.name} Initialized. Server: {init_result.get('serverInfo', 'Unknown')}")
-            
-            # 2. Initialized Notification
-            await self.send_notification("notifications/initialized")
-            
-            # 3. List Tools, Resources & Prompts
-            await asyncio.gather(
-                self.refresh_tools(),
-                self.refresh_resources(),
-                self.refresh_prompts()
-            )
+            self._read_task = asyncio.create_task(self._stdio_read_loop())
+            self._stderr_task = asyncio.create_task(self._stdio_read_stderr())
             
         except FileNotFoundError:
             logger.error(f"MCP Client {self.name} failed: Command '{cmd}' not found.")
             await self.disconnect()
         except Exception as e:
             logger.error(f"MCP Connection for {self.name} failed: {e}")
+            await self.disconnect()
+
+    async def _connect_sse(self):
+        url = self.config.url
+        logger.info(f"Connecting to MCP server '{self.name}' (SSE): {url}")
+        
+        try:
+            self.sse_session = httpx.AsyncClient(timeout=None) # Long timeout for SSE
+            # We start the read loop immediately, which handles the connection
+            self.running = True
+            self._read_task = asyncio.create_task(self._sse_read_loop(url))
+            
+            # Wait briefly for the connection to be established and endpoint to be received
+            # (In a real implementation, we might need a condition variable)
+            for _ in range(20):
+                if self.sse_post_endpoint:
+                    break
+                if not self.running:
+                    raise ConnectionError("SSE connection terminated prematurely.")
+                await asyncio.sleep(0.1)
+            
+            if not self.sse_post_endpoint:
+                 # Fallback: Assume the POST endpoint is the same as the SSE URL (or similar)
+                 # Some simple servers might use the same URL for POST
+                 # But standard MCP over SSE sends the 'endpoint' event first.
+                 logger.warning(f"MCP {self.name}: No 'endpoint' event received. Using {url} for POST.")
+                 self.sse_post_endpoint = url
+
+        except Exception as e:
+            logger.error(f"MCP SSE Connection for {self.name} failed: {e}")
             await self.disconnect()
 
     async def refresh_tools(self):
@@ -257,61 +310,128 @@ class MCPClient:
         await self._write_json(payload)
 
     async def _write_json(self, data: Dict):
-        """Writes JSON payload to stdin."""
-        try:
-            json_str = json.dumps(data) + "\n"
-            self.process.stdin.write(json_str.encode())
-            await self.process.stdin.drain()
-        except Exception as e:
-            logger.error(f"Write error {self.name}: {e}")
-            raise
+        """Writes JSON payload to transport (stdio or HTTP POST)."""
+        if self.transport_type == "stdio":
+            try:
+                json_str = json.dumps(data) + "\n"
+                self.process.stdin.write(json_str.encode())
+                await self.process.stdin.drain()
+            except Exception as e:
+                logger.error(f"Write error {self.name}: {e}")
+                raise
+        elif self.transport_type == "sse":
+            if not self.sse_post_endpoint:
+                raise RuntimeError("SSE Post Endpoint not yet discovered.")
+            try:
+                # We reuse the session or use a new one for POST?
+                # Generally better to reuse, but httpx.stream locks the client if not using HTTP/2
+                # So we use a separate request.
+                await self.sse_session.post(self.sse_post_endpoint, json=data)
+            except Exception as e:
+                logger.error(f"SSE Post error {self.name}: {e}")
+                raise
 
-    async def _read_loop(self):
-        """Reads stdout, parses JSON-RPC messages, and resolves futures."""
-        buffer = ""
+    async def _stdio_read_loop(self):
+        """Reads stdout, parses JSON-RPC messages."""
         while self.running and self.process.stdout:
             try:
                 line = await self.process.stdout.readline()
                 if not line: break # EOF
                 
-                # Check for debug logs mixed in stdout (common in some servers)
                 line_str = line.decode().strip()
                 if not line_str: continue
                 
-                try:
-                    message = json.loads(line_str)
-                except json.JSONDecodeError:
-                    logger.warning(f"MCP {self.name} Non-JSON output: {line_str}")
-                    continue
-
-                if "id" in message:
-                    # It's a response (or request from server, but we act as client)
-                    req_id = message["id"]
-                    if req_id in self._pending_requests:
-                        future = self._pending_requests.pop(req_id)
-                        if "error" in message:
-                            err = message["error"]
-                            future.set_exception(JSONRPCError(err.get("code"), err.get("message"), err.get("data")))
-                        elif "result" in message:
-                            future.set_result(message["result"])
-                        else:
-                            future.set_result(None) # Ack?
-                else:
-                    # Notification or request from server
-                    method = message.get("method")
-                    if method == "ping":
-                        # Auto-reply to ping if server initiates (rare for stdio)
-                        pass
-                    # logger.debug(f"MCP Notification: {method}")
+                await self._process_message(line_str)
 
             except Exception as e:
                 logger.error(f"Read loop error {self.name}: {e}")
                 break
         
-        logger.info(f"MCP {self.name} read loop ended.")
+        logger.info(f"MCP {self.name} stdio loop ended.")
         await self.disconnect()
 
-    async def _read_stderr(self):
+    async def _sse_read_loop(self, url: str):
+        """Reads SSE stream."""
+        backoff = 1
+        while self.running:
+            try:
+                async with self.sse_session.stream("GET", url) as response:
+                    async for line in response.aiter_lines():
+                        if not self.running: break
+                        line = line.strip()
+                        if not line: continue
+                        
+                        if line.startswith("event:"):
+                            event_type = line[len("event:"):].strip()
+                            # We expect the next line to be data:
+                            continue 
+                        
+                        if line.startswith("data:"):
+                            data_str = line[len("data:"):].strip()
+                            
+                            # Check for 'endpoint' event (SSE discovery)
+                            if not self.sse_post_endpoint:
+                                # First message might be the endpoint URI
+                                # If it's a relative URI, join with base URL
+                                try:
+                                    # We try to parse it as JSON first to see if it's a regular message
+                                    # But per spec, the first event might be type: endpoint
+                                    # For now, let's treat it as a message and inspect inside _process_message
+                                    # Actually, standard MCP SSE sends event: endpoint \n data: /post-route
+                                    if data_str.startswith("/") or "http" in data_str:
+                                         # Likely the endpoint
+                                         if data_str.startswith("/"):
+                                              from urllib.parse import urljoin
+                                              self.sse_post_endpoint = urljoin(url, data_str)
+                                         else:
+                                              self.sse_post_endpoint = data_str
+                                         logger.info(f"MCP {self.name} SSE Endpoint discovered: {self.sse_post_endpoint}")
+                                         continue
+                                except:
+                                    pass
+
+                            await self._process_message(data_str)
+            
+            except httpx.RequestError as e:
+                logger.warning(f"MCP SSE Disconnected ({e}). Reconnecting in {backoff}s...")
+                await asyncio.sleep(backoff)
+                backoff = min(backoff * 2, 30)
+            except Exception as e:
+                logger.error(f"MCP SSE Fatal Error: {e}")
+                break
+        
+        logger.info(f"MCP {self.name} SSE loop ended.")
+        await self.disconnect()
+
+    async def _process_message(self, message_str: str):
+        """Parses and handles a single JSON-RPC message string."""
+        try:
+            message = json.loads(message_str)
+        except json.JSONDecodeError:
+            logger.warning(f"MCP {self.name} Non-JSON output: {message_str}")
+            return
+
+        if "id" in message:
+            # Response to our request
+            req_id = message["id"]
+            if req_id in self._pending_requests:
+                future = self._pending_requests.pop(req_id)
+                if "error" in message:
+                    err = message["error"]
+                    future.set_exception(JSONRPCError(err.get("code"), err.get("message"), err.get("data")))
+                elif "result" in message:
+                    future.set_result(message["result"])
+                else:
+                    future.set_result(None)
+        else:
+            # Notification or Server Request
+            method = message.get("method")
+            if method == "ping":
+                # Auto-reply to ping if needed (mostly handled by transport)
+                pass
+            # Handle server-side tool calls (sampling) would go here
+
+    async def _stdio_read_stderr(self):
         """Logs stderr from the server process."""
         while self.running and self.process.stderr:
             line = await self.process.stderr.readline()
@@ -339,14 +459,8 @@ class MCPClient:
                         try:
                             args_schema = BaseModel.model_rebuild(__root__=t_schema)
                         except:
-                            # Fallback if complex schema: allow any dict
-                            # Real implementation would need a dynamic model builder
-                            # For now we skip validation if rebuild fails or use a generic Dict
                             class GenericSchema(BaseModel):
                                 pass 
-                            # We can't easily map arbitrary JSON Schema to Pydantic dynamically 
-                            # without a heavy library like datamodel-code-generator.
-                            # Strategy: Use a generic schema that accepts **kwargs but describe it in prompt.
                             args_schema = None 
 
                         async def run(self, **kwargs) -> str:
@@ -367,9 +481,6 @@ class MCPClient:
                             except Exception as e:
                                 return f"MCP Tool Error: {e}"
                                 
-                    # Hack: since we can't easily build the Pydantic model dynamically, 
-                    # we inject the raw schema into the tool so the Provider can use it directly
-                    # for function calling definitions.
                     DynamicMCPTool.args_schema_raw = t_schema
                     return DynamicMCPTool()
 
@@ -389,10 +500,16 @@ class MCPClient:
             future.cancel()
         self._pending_requests.clear()
 
+        # Shutdown Stdio
         if self.process:
             try:
                 self.process.terminate()
                 await self.process.wait()
             except Exception:
                 pass
+        
+        # Shutdown SSE
+        if self.sse_session:
+            await self.sse_session.aclose()
+            
         logger.info(f"MCP Client {self.name} disconnected.")

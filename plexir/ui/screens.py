@@ -4,9 +4,10 @@ Includes confirmation dialogs for critical actions.
 """
 
 import os
+import datetime
 from textual.app import ComposeResult
 from textual.screen import ModalScreen
-from textual.widgets import Button, Label, Static
+from textual.widgets import Button, Label, Static, Input
 from textual.containers import Vertical, Horizontal
 from plexir.ui.diff_viewer import DiffViewer
 
@@ -66,4 +67,39 @@ class ConfirmToolCall(ModalScreen[str]):
             self.dismiss("skip")
         else:
             self.dismiss("stop")
+
+class SandboxSyncScreen(ModalScreen[str]):
+    """Modal screen to handle sandbox export on exit."""
+
+    def __init__(self):
+        super().__init__()
+        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        self.default_export_path = f"sandbox_export_{timestamp}"
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="sandbox-modal"):
+            yield Label("⚠️ [bold]Unsaved Sandbox Changes[/bold]", classes="warning-title")
+            yield Label("You are exiting Clone Mode. Sandbox changes will be lost unless saved.")
+            
+            yield Label("\nExport Path:", classes="section-title")
+            yield Input(value=self.default_export_path, id="export-path-input")
+            
+            with Horizontal(id="sandbox-buttons"):
+                yield Button("Export to Path", variant="primary", id="btn-export")
+                yield Button("Sync to CWD (Overwrite)", variant="warning", id="btn-sync")
+                
+            with Horizontal(id="sandbox-actions"):
+                yield Button("Discard & Exit", variant="error", id="btn-discard")
+                yield Button("Cancel", id="btn-cancel")
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "btn-export":
+            path = self.query_one("#export-path-input", Input).value
+            self.dismiss(f"export:{path}")
+        elif event.button.id == "btn-sync":
+            self.dismiss("sync_cwd")
+        elif event.button.id == "btn-discard":
+            self.dismiss("discard")
+        elif event.button.id == "btn-cancel":
+            self.dismiss("cancel")
 

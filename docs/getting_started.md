@@ -34,26 +34,44 @@ Before installing Plexir, ensure you have the following:
 
 On the first run, Plexir will create a default configuration directory at `~/.plexir/`.
 
-1. **Launch Plexir**:
-   ```bash
-   plexir
-   ```
+### 1. Launch Plexir
+```bash
+plexir
+```
 
-2. **Set your primary API key**:
-   Inside the TUI, type the following command (replacing `YOUR_KEY` with your actual key):
-   ```bash
-   /config set "Gemini Primary" api_key YOUR_KEY
-   ```
+### 2. Authentication
+Plexir supports both API Keys and Google OAuth.
 
-3. **Reload**:
-   Type `/reload` or press `Ctrl+R` to apply the changes.
+**Option A: API Key (Standard)**
+Inside the TUI, type:
+```bash
+/config set "Gemini Primary" api_key YOUR_KEY
+/reload
+```
 
-## Your First Interaction
+**Option B: Google OAuth (High Quota)**
+If you want to use your Gemini CLI / Code Assist quota:
+1.  Run `/auth login` inside Plexir.
+2.  Follow the instructions (a new window will open).
+3.  Once logged in, run `/reload`.
 
+### 3. Verify
 Try asking Plexir to explore your current directory:
-> "List the files in this project and tell me what the project is about."
+> "List the files in this project."
 
-Plexir will use the `list_directory` and `read_file` tools to fulfill your request.
+## Modes of Operation
+
+### Standard Mode
+```bash
+plexir
+```
+Safe default. File edits require confirmation.
+
+### Autonomous "YOLO" Mode
+```bash
+plexir --sandbox --yolo
+```
+Fully autonomous. No confirmation prompts. Runs inside a secure Docker container.
 
 ## Safety First
 
@@ -63,3 +81,4 @@ For complete safety, always use the **Sandbox Mode**:
 ```bash
 plexir --sandbox
 ```
+This isolates the agent in a Docker container. In **Clone Mode** (default), your files are protected; changes are only saved if you explicitly export them on exit.

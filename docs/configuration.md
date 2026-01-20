@@ -4,21 +4,46 @@ Plexir is designed to be provider-agnostic, supporting multiple LLM services wit
 
 ## The Configuration File
 
-Settings are stored in JSON format at `~/.plexir/config.json`.
+Settings are stored in JSON format at `~/.plexir/config.json`. This file is automatically secured with `0o600` permissions (owner read/write only).
 
 ## Provider Types
 
-- **`gemini`**: Google's Gemini models (Flash, Pro). Requires an API key from Google AI Studio.
+- **`gemini`**: Google's Gemini models. Supports **API Key** (AI Studio) and **OAuth** (Vertex AI/Standalone).
 - **`groq`**: Ultra-fast inference for Llama 3 and Mistral models. Requires a Groq API key.
 - **`openai`**: Supports official OpenAI models or any OpenAI-compatible API (like local Ollama instances).
+
+## Authentication Modes (`auth_mode`)
+
+For Gemini providers, you can specify how Plexir should authenticate:
+
+- **`auto` (Default)**: Attempts API Key first, then looks for Standalone OAuth tokens (`oauth_creds.json`).
+- **`api_key`**: Strictly use the provided `api_key`.
+- **`oauth`**: Strictly use standalone OAuth credentials (using the custom REST client bypass for AI Studio access).
+
+### Secure Secrets
+Instead of plain text, you can use:
+- `env:VARIABLE_NAME`: Read from environment variables.
+- `keyring:username`: Read from the system keyring (service: `plexir`).
 
 ## Failover & Retries
 
 Plexir manages providers using a priority order defined in your config.
 
-1. **Smart Retries**: If a provider returns a rate limit error (429), Plexir will retry up to 20 times with a 2-second delay.
-2. **Instant Fallback**: If a provider returns a hard "Resource Exhausted" or "Fatal" error, Plexir immediately switches to the next provider in the list.
-3. **Sticky Routing**: Once a fallback is successful, Plexir "sticks" to that backup provider for the rest of the conversation to ensure consistency.
+1. **Jittered Retries**: If a provider returns a rate limit error (429) or transient server error (503), Plexir will retry with a smart exponential backoff (e.g., `2^attempt + jitter`).
+2. **Explicit Delay**: Plexir parses "Retry-After" hints from the Google API (e.g., "retry in 17s") and waits the exact duration required.
+3. **Instant Fallback**: If retries are exhausted or a hard "Fatal" error occurs, Plexir immediately switches to the next provider in the list.
+
+## Dynamic Pricing
+
+Plexir allows you to configure token prices per model in `config.json`. This ensures cost estimation remains accurate as providers update their pricing.
+
+```json
+"pricing": {
+    "gemini-2.0-flash": [0.10, 0.40],
+    "gpt-4o": [2.50, 10.00]
+}
+```
+*(Format: [Input price per 1M, Output price per 1M])*
 
 ## Managing via CLI
 
@@ -36,12 +61,12 @@ You can manage your providers without leaving the TUI using slash commands:
 
 ### Set an API key
 ```bash
-/config set "Gemini Primary" api_key AIza...
+/config set "Gemini Primary" api_key env:GEMINI_KEY
 ```
 
-### Change model
+### Change auth mode
 ```bash
-/config set "Groq Backup" model_name deepseek-v3
+/config set "Gemini Primary" auth_mode oauth
 ```
 
 ### Reorder priorities
@@ -62,4 +87,3 @@ To prevent unexpected costs during long sessions, you can set a maximum dollar a
 
 ### View current usage
 Usage metrics (Tokens and Estimated Cost) are always visible in the **System Status** sidebar.
-

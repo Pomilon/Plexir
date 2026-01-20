@@ -568,6 +568,74 @@ except Exception as e:
         except Exception as e:
             return f"Error getting definitions: {e}"
 
+class GetRepoMapSchema(BaseModel):
+    root_dir: str = Field(".", description="Root directory to map.")
+    max_depth: int = Field(3, description="Maximum depth to traverse.")
+
+class GetRepoMapTool(Tool):
+    """Generates a high-level map of the codebase structure."""
+    name = "get_repo_map"
+    description = "Generates a tree-like map of the codebase, including file names and key symbols (classes/functions) for Python files."
+    args_schema = GetRepoMapSchema
+
+    async def run(self, root_dir: str = ".", max_depth: int = 3) -> str:
+        if self.sandbox:
+            # Inject the full Python logic into the sandbox via base64
+            # This avoids dependencies like 'tree' and gives us AST parsing inside the container
+            py_script = r"""
+import os
+import ast
+import sys
+
+def generate_map(root_dir, max_depth):
+    ignore_dirs = {'.git', '__pycache__', 'node_modules', 'venv', '.env', '.venv', 'dist', 'build'}
+    output = []
+    
+    for root, dirs, files in os.walk(root_dir):
+        dirs[:] = [d for d in dirs if d not in ignore_dirs]
+        level = root.replace(root_dir, '').count(os.sep)
+        if level > max_depth: continue
+        
+        indent = "  " * level
+        output.append(f"{indent}{os.path.basename(root)}/")
+        
+        for file in files:
+            if file.startswith('.'): continue
+            file_path = os.path.join(root, file)
+            output.append(f"{indent}  {file}")
+            
+            if file.endswith(".py"):
+                try:
+                    with open(file_path, "r", encoding="utf-8") as f:
+                        tree = ast.parse(f.read())
+                    symbols = []
+                    for node in tree.body:
+                        if isinstance(node, ast.ClassDef):
+                            symbols.append(f"C:{node.name}")
+                        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                            symbols.append(f"F:{node.name}")
+                    if symbols:
+                        symbol_str = ", ".join(symbols[:5])
+                        if len(symbols) > 5: symbol_str += "..."
+                        output.append(f"{indent}    └─ [{symbol_str}]")
+                except:
+                    pass
+    print("\n".join(output))
+
+if __name__ == "__main__":
+    root = sys.argv[1] if len(sys.argv) > 1 else "."
+    depth = int(sys.argv[2]) if len(sys.argv) > 2 else 3
+    generate_map(root, depth)
+"""
+            b64_code = base64.b64encode(py_script.encode("utf-8")).decode("utf-8")
+            cmd = f"echo {b64_code} | base64 -d | python3 - '{root_dir}' {max_depth}"
+            return await self.sandbox.exec(cmd)
+
+        try:
+            return await asyncio.to_thread(CodebaseRetriever.generate_repo_map, root_dir, max_depth)
+        except Exception as e:
+            return f"Error generating repo map: {e}"
+
 class ScratchpadSchema(BaseModel):
     action: str = Field(..., description="Action: 'read', 'append', 'clear'.")
     content: str = Field(None, description="Content to append (required for 'append').")
@@ -716,3 +784,22 @@ class GitHubCreatePRTool(Tool):
 
     async def run(self, repo: str, title: str, body: str, head: str, base: str = "main") -> str:
         return await asyncio.to_thread(GitHubClient.create_pull_request, repo, title, body, head, base)
+
+class ExportSandboxSchema(BaseModel):
+    target_path: str = Field(..., description="Local path to export the sandbox workspace to.")
+
+class ExportSandboxTool(Tool):
+    """Exports the contents of the sandbox workspace to the host."""
+    name = "export_sandbox"
+    description = "Exports the entire /workspace from the sandbox to a local directory. Use this to save changes in Clone Mode."
+    args_schema = ExportSandboxSchema
+    is_critical = True
+
+    async def run(self, target_path: str) -> str:
+        if not self.sandbox:
+            return "Error: No sandbox active."
+        try:
+            await self.sandbox.export_workspace(target_path)
+            return f"Successfully exported workspace to {target_path}."
+        except Exception as e:
+            return f"Export failed: {e}"

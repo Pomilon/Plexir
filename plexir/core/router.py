@@ -5,6 +5,8 @@ Manages provider selection, failover, and tool orchestration with smart retries.
 
 import asyncio
 import logging
+import random
+import re
 from typing import List, Dict, Any, AsyncGenerator, Union, Optional
 
 from plexir.tools.base import ToolRegistry
@@ -13,7 +15,8 @@ from plexir.tools.definitions import (
     EditFileTool, GitDiffTool, GitAddTool, GitCommitTool, GitCheckoutTool, GitBranchTool,
     GitPushTool, GitPullTool,
     GitHubCreateIssueTool, GitHubCreatePRTool,
-    WebSearchTool, BrowseURLTool, CodebaseSearchTool, GetDefinitionsTool, ScratchpadTool
+    WebSearchTool, BrowseURLTool, CodebaseSearchTool, GetDefinitionsTool, GetRepoMapTool, ScratchpadTool,
+    ExportSandboxTool
 )
 from plexir.tools.sandbox import PythonSandboxTool, PersistentSandbox
 from plexir.core import context
@@ -41,17 +44,29 @@ def is_retryable_error(error: Exception) -> bool:
     """
     err_str = str(error).lower()
     
-    # Check for hard exhaustion (Resource Exhaustion / Fatal)
-    # If it says 'quota' or 'daily', it's usually a hard limit that won't resolve by retrying.
-    if "quota" in err_str or "daily" in err_str or "exceeded your current" in err_str:
+    # 1. Hard Limits (Fatal) -> Trigger Failover
+    # Check for keywords indicating non-recoverable quota issues
+    if "daily" in err_str or "bill" in err_str:
         return False
+    
+    # 2. Rate Limits (Retryable) -> Trigger Backoff
+    # Google often says "Resource exhausted" for both RPM and Daily.
+    # If it says "per minute" or "request limit", it's likely RPM.
+    if "per minute" in err_str or "per_minute" in err_str or "rpm" in err_str:
+        return True
         
+    # If generic "quota" or "resource exhausted", and NOT daily/bill:
+    # We treat it as retryable for a few attempts, but router handles max_retries.
+    # The user complaint was premature failover. So let's err on side of Retry.
+    if "resource exhausted" in err_str or "quota" in err_str:
+        return True
+
     # Check for transient rate limits (RPM/TPM)
     if "429" in err_str or "rate limit" in err_str or "too many requests" in err_str:
         return True
         
     # Check for transient server errors
-    if any(code in err_str for code in ["500", "502", "503", "504"]):
+    if any(code in err_str for code in ["500", "502", "503", "504", "overloaded", "server error"]):
         return True
         
     return False
@@ -62,31 +77,22 @@ class Router:
     """
     MAX_HISTORY_MESSAGES = 40
 
-    def __init__(self, sandbox_enabled: bool = False):
+    def __init__(self, sandbox_enabled: bool = False, mount_cwd: bool = False):
         self.registry = ToolRegistry()
         self.mcp_clients: List[MCPClient] = []
         self.sandbox_enabled = sandbox_enabled
-        self.sandbox = PersistentSandbox() if sandbox_enabled else None
+        self.mount_cwd = mount_cwd
+        self.sandbox = PersistentSandbox(mount_cwd=mount_cwd) if sandbox_enabled else None
         self.container_started = False
         self.load_base_tools()
         self.providers = []
         self.active_provider_index = 0
         self.session_usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0, "total_cost": 0.0}
 
-        # Naive pricing map (per 1M tokens)
-        self.PRICING_MAP = {
-            "gemini-2.0-flash": (0.10, 0.40),
-            "gemini-1.5-flash": (0.075, 0.30),
-            "gemini-1.5-pro": (1.25, 5.00),
-            "gpt-4o": (2.50, 10.00),
-            "gpt-4o-mini": (0.15, 0.60),
-            "claude-3-5-sonnet": (3.00, 15.00),
-            "llama-3.3-70b-versatile": (0.59, 0.79), # Groq
-        }
-
     def _calculate_cost(self, model: str, prompt_tokens: int, completion_tokens: int) -> float:
         """Estimates cost based on model and token counts."""
-        rates = self.PRICING_MAP.get(model.lower(), (0.50, 1.50)) # Default fallback
+        pricing_map = config_manager.config.pricing
+        rates = pricing_map.get(model.lower(), (0.50, 1.50)) # Default fallback
         cost = (prompt_tokens / 1_000_000 * rates[0]) + (completion_tokens / 1_000_000 * rates[1])
         return cost
 
@@ -98,7 +104,8 @@ class Router:
             GitDiffTool(), GitAddTool(), GitCommitTool(), GitCheckoutTool(), GitBranchTool(),
             GitPushTool(), GitPullTool(),
             GitHubCreateIssueTool(), GitHubCreatePRTool(),
-            WebSearchTool(), BrowseURLTool(), CodebaseSearchTool(), GetDefinitionsTool(), ScratchpadTool()
+            WebSearchTool(), BrowseURLTool(), CodebaseSearchTool(), GetDefinitionsTool(), GetRepoMapTool(), ScratchpadTool(),
+            ExportSandboxTool()
         ]
         for tool in tools:
             if self.sandbox:
@@ -259,9 +266,20 @@ Available Tools:
                     return # Success! 
 
                 except Exception as e:
+                    # Check if error has explicit retry delay
+                    explicit_wait = 0.0
+                    match = re.search(r"retry in (\d+(\.\d+)?)s", str(e).lower())
+                    if match:
+                        explicit_wait = float(match.group(1))
+
                     if is_retryable_error(e) and attempt < max_retries:
-                        # Exponential backoff: 1s, 2s, 4s, 8s, 16s... capped at 30s
-                        wait_time = min(2 ** attempt, 30)
+                        # Jittered Exponential backoff
+                        base_wait = 2 ** attempt
+                        calc_wait = min(60, base_wait + random.uniform(0, 3))
+                        
+                        # Use the larger of explicit wait or calculated wait
+                        wait_time = max(explicit_wait, calc_wait)
+                        
                         yield RouterEvent(RouterEvent.RETRY, data={
                             "provider": provider.name,
                             "attempt": attempt + 1,

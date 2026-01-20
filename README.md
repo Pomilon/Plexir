@@ -4,7 +4,7 @@
 
 ![Plexir UI](assets/image.png)
 
-[![Version](https://img.shields.io/badge/version-1.5.0-blue.svg)](https://github.com/pomilon/plexir)
+[![Version](https://img.shields.io/badge/version-1.6.0-blue.svg)](https://github.com/pomilon/plexir)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 ---

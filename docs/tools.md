@@ -10,7 +10,9 @@ Plexir agents are equipped with a powerful set of tools to interact with the sys
 | `write_file` | Creates or overwrites a file. | **Yes** |
 | `list_directory` | Lists files and folders in a path. | No |
 | `edit_file` | Precise text replacement within a file. | **Yes** |
-| `get_definitions` | Summarizes classes and functions in a file. | No |
+| `get_definitions` | Summarizes classes and functions in a single file. | No |
+| `get_repo_map` | Generates a high-level architectural tree of the codebase with symbol summaries. | No |
+| `export_sandbox` | Exports the sandbox workspace to the host (Clone Mode only). | **Yes** |
 
 ## Git Tools
 

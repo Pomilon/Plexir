@@ -103,8 +103,11 @@ def test_is_retryable_error():
     """Verify error classification."""
     assert is_retryable_error(Exception("429 Too Many Requests")) is True
     assert is_retryable_error(Exception("503 Service Unavailable")) is True
-    assert is_retryable_error(Exception("Quota exceeded")) is False
-    assert is_retryable_error(Exception("Fatal error")) is False
+    # In v1.6.0, generic "Quota exceeded" is retryable to handle RPM limits
+    assert is_retryable_error(Exception("Quota exceeded")) is True
+    # "Daily" remains fatal
+    assert is_retryable_error(Exception("Daily limit exceeded")) is False
+    assert is_retryable_error(Exception("Connection refused")) is False
 
 # --- Async Core Tests ---
 
