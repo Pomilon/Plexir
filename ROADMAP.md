@@ -87,6 +87,30 @@ We have successfully implemented the core foundation and advanced agentic capabi
 
 ---
 
+## ✅ Completed Milestones (v1.6)
+
+### 🚀 Core Architecture
+- [x] **Provider Abstraction**: Refactored `LLMProvider` to support `gemini`, `openai`, `groq`, and `ollama` seamlessly.
+- [x] **Thinking Blocks**: Added support for `<think>` tags to visualize reasoning chains in the TUI.
+- [x] **Config Manager**: Centralized configuration with secure secret handling (keyring support).
+
+### 🛠️ Developer Experience
+- [x] **Sandbox Integration**: Docker-based sandboxing for safe code execution.
+- [x] **MCP Support**: Full integration with Model Context Protocol for extensible tools.
+
+---
+
+## ✅ Completed Milestones (v1.7)
+
+### ⚡ Inference Acceleration
+- [x] **Cerebras Support**: Native integration for Cerebras Inference API (Llama 3.1 8B/70B) for ultra-fast generation.
+
+### 🧠 Advanced Capabilities
+- [x] **Multi-Agent Delegation**: Formalized the `delegate_to_agent` workflow with dedicated sub-agent contexts.
+- [x] **Memory Bank**: Persistent long-term memory using vector stores (Chroma/Qdrant).
+
+---
+
 ## 🔮 Long Term Vision (v2.0)
 
 ### 1. True "IDE-Like" UI

@@ -74,7 +74,7 @@ class CommandProcessor:
             await self.app.action_reload_providers()
             return "Providers reloaded from config."
         elif cmd in ("/quit", "/exit"):
-            await self.app.action_quit()
+            self.app.action_quit()
             return "Exiting..."
         else:
             return f"Unknown command: {cmd}. Type /help for list."
@@ -318,7 +318,7 @@ class CommandProcessor:
         elif key == "model_name": p_config.model_name = value
         elif key == "base_url": p_config.base_url = value
         elif key == "type":
-             if value not in ("gemini", "openai", "groq", "ollama", "mcp"):
+             if value not in ("gemini", "openai", "groq", "ollama", "mcp", "cerebras"):
                  return f"Error: Invalid type '{value}'."
              p_config.type = value
         elif key == "auth_mode":
@@ -344,7 +344,7 @@ class CommandProcessor:
             if arg.startswith("api_key="): api_key = arg.split("=", 1)[1]
             elif arg.startswith("base_url="): base_url = arg.split("=", 1)[1]
 
-        if type_val not in ("gemini", "openai", "groq", "ollama", "mcp"):
+        if type_val not in ("gemini", "openai", "groq", "ollama", "mcp", "cerebras"):
             return f"Error: Invalid type '{type_val}'."
 
         new_p = ProviderConfig(name=name, type=type_val, model_name=model, api_key=api_key, base_url=base_url)

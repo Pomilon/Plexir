@@ -16,6 +16,7 @@ from plexir.tools.base import Tool
 from plexir.core.rag import CodebaseRetriever
 from plexir.core.config_manager import config_manager
 from plexir.core.github import GitHubClient
+from plexir.core.memory import MemoryBank
 
 logger = logging.getLogger(__name__)
 
@@ -803,3 +804,54 @@ class ExportSandboxTool(Tool):
             return f"Successfully exported workspace to {target_path}."
         except Exception as e:
             return f"Export failed: {e}"
+
+class DelegateToAgentSchema(BaseModel):
+    agent_name: str = Field(..., description="A descriptive name for the sub-agent (e.g., 'codebase_investigator').")
+    objective: str = Field(..., description="The comprehensive and detailed goal for the sub-agent.")
+
+class DelegateToAgentTool(Tool):
+    """Formalizes the delegation of a complex sub-task to a specialized sub-agent."""
+    name = "delegate_to_agent"
+    description = "Delegates a complex sub-task to a specialized sub-agent. The sub-agent will work on the objective and return a structured report."
+    args_schema = DelegateToAgentSchema
+
+    async def run(self, agent_name: str, objective: str) -> str:
+        # In this version, we simulate the delegation by logging it and returning a prompt for the user
+        # In a future version, this could spawn a separate Router instance.
+        logger.info(f"Delegating task to agent '{agent_name}': {objective}")
+        return f"TASK DELEGATED TO {agent_name.upper()}\nObjective: {objective}\n\nPlease proceed with this sub-task and report back when finished."
+
+class SaveMemorySchema(BaseModel):
+    content: str = Field(..., description="The fact or information to remember.")
+    category: str = Field("general", description="Optional category (e.g., 'preference', 'fact', 'code_pattern').")
+
+class SaveMemoryTool(Tool):
+    """Saves a piece of information to the long-term vector memory."""
+    name = "save_memory"
+    description = "Saves a fact, preference, or piece of information to long-term memory."
+    args_schema = SaveMemorySchema
+
+    async def run(self, content: str, category: str = "general") -> str:
+        # MemoryBank is singleton
+        bank = MemoryBank()
+        return await asyncio.to_thread(bank.add, content, {"category": category})
+
+class SearchMemorySchema(BaseModel):
+    query: str = Field(..., description="The query to search for in memory.")
+
+class SearchMemoryTool(Tool):
+    """Searches the long-term vector memory."""
+    name = "search_memory"
+    description = "Semantic search over long-term memory to retrieve relevant facts or context."
+    args_schema = SearchMemorySchema
+
+    async def run(self, query: str) -> str:
+        bank = MemoryBank()
+        results = await asyncio.to_thread(bank.search, query)
+        if not results:
+            return "No relevant memories found."
+        
+        output = ["Found memories:"]
+        for res in results:
+            output.append(f"- [{res['score']:.2f}] {res['content']} (ID: {res['id']})")
+        return "\n".join(output)

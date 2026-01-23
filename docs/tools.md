@@ -29,6 +29,9 @@ Plexir agents are equipped with a powerful set of tools to interact with the sys
 
 | Tool | Description | Critical? |
 | :--- | :--- | :--- |
+| `delegate_to_agent` | Spawns a specialized sub-agent (e.g., `researcher`) to handle complex sub-tasks autonomously. | No |
+| `save_memory` | Saves a specific fact or piece of information to long-term storage (`chromadb`). | No |
+| `search_memory` | Retrieves relevant memories based on a semantic query. | No |
 | `codebase_search` | Semantically searches code using natural language keywords. | No |
 | `scratchpad` | Reads/Writes/Clears a persistent memory file for planning. | No |
 

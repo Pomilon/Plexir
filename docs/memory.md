@@ -2,6 +2,24 @@
 
 Plexir uses advanced techniques to manage long-running conversations, ensuring the model remains coherent even as the history grows.
 
+## 🧠 Persistent Memory Bank (New in v1.7)
+
+Plexir now includes a **Long-Term Memory** system powered by `chromadb`. This allows the agent to store and recall specific facts across different sessions.
+
+### Features
+- **Semantic Storage**: Memories are stored as embeddings, meaning the agent can find them even if the exact keywords don't match (e.g., searching for "database credentials" finds "db password").
+- **Session Persistence**: Memories persist even after you close Plexir. They are stored in `~/.plexir/memory`.
+- **Tools**:
+    - `save_memory`: The agent uses this to store explicit user facts (e.g., "The user prefers Python over C++").
+    - `search_memory`: The agent uses this to recall information when needed.
+
+### Usage
+You can prompt the agent to remember things directly:
+> "Remember that my API keys are stored in .env.local"
+
+Or ask it to recall:
+> "Where did I say my keys were?"
+
 ## 🔄 Rolling Summarization
 
 When a conversation history becomes too large (exceeding 40 messages), Plexir automatically triggers **Rolling Summarization**. 

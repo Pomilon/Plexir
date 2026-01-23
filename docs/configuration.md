@@ -10,6 +10,7 @@ Settings are stored in JSON format at `~/.plexir/config.json`. This file is auto
 
 - **`gemini`**: Google's Gemini models. Supports **API Key** (AI Studio) and **OAuth** (Vertex AI/Standalone).
 - **`groq`**: Ultra-fast inference for Llama 3 and Mistral models. Requires a Groq API key.
+- **`cerebras`**: High-performance inference provider (OpenAI-compatible). Requires a Cerebras API key.
 - **`openai`**: Supports official OpenAI models or any OpenAI-compatible API (like local Ollama instances).
 
 ## Authentication Modes (`auth_mode`)

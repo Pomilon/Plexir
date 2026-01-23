@@ -165,8 +165,12 @@ class MCPClient:
             res_list = await self.send_request("resources/list")
             self.resources = res_list.get("resources", [])
             
-            tmpl_list = await self.send_request("resources/templates/list")
-            self.resource_templates = tmpl_list.get("resourceTemplates", [])
+            try:
+                tmpl_list = await self.send_request("resources/templates/list")
+                self.resource_templates = tmpl_list.get("resourceTemplates", [])
+            except Exception:
+                # Templates might not be supported by all servers
+                self.resource_templates = []
 
             if self.resources or self.resource_templates:
                 self._register_resource_tool()

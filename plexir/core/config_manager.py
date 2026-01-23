@@ -52,7 +52,7 @@ def store_secret(username: str, secret: str):
 class ProviderConfig(BaseModel):
     """Configuration for an individual LLM provider."""
     name: str = Field(..., description="Unique name for the provider.")
-    type: str = Field(..., description="Type: gemini, openai, groq, ollama, mcp.")
+    type: str = Field(..., description="Type: gemini, openai, groq, ollama, cerebras, mcp.")
     api_key: Optional[str] = None
     model_name: str
     base_url: Optional[str] = None
@@ -114,6 +114,10 @@ class AppConfig(BaseModel):
             "deepseek-v3": (0.27, 1.10),
             "deepseek-reasoner": (0.55, 2.19),
             "llama-3.3-70b-versatile": (0.59, 0.79),
+            
+            # --- Cerebras Inference ---
+            "llama3.1-8b": (0.10, 0.10),
+            "llama3.1-70b": (0.60, 0.60),
         },
         description="Pricing map: model -> (prompt_price, completion_price) per 1M tokens."
     )

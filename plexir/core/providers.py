@@ -254,13 +254,17 @@ class OpenAICompatibleProvider(LLMProvider):
         self.model_name = config.model_name
         api_key = config.get_api_key() or "MISSING_KEY"
         
-        if config.type == "groq" and not config.base_url:
+        base_url = config.base_url
+        if config.type == "groq" and not base_url:
             self.client = AsyncGroq(api_key=api_key)
-        else:
-            self.client = AsyncOpenAI(
-                api_key=api_key,
-                base_url=config.base_url or "https://api.openai.com/v1"
-            )
+            return
+        elif config.type == "cerebras" and not base_url:
+            base_url = "https://api.cerebras.ai/v1"
+        
+        self.client = AsyncOpenAI(
+            api_key=api_key,
+            base_url=base_url or "https://api.openai.com/v1"
+        )
 
     async def generate(
         self, 
@@ -330,14 +334,19 @@ class OpenAICompatibleProvider(LLMProvider):
         openai_tools = self.tools.to_openai_toolbox()
 
         try:
-            stream = await self.client.chat.completions.create(
-                messages=messages,
-                model=self.model_name,
-                tools=openai_tools if openai_tools else None,
-                tool_choice="auto" if openai_tools else None,
-                stream=True,
-                stream_options={"include_usage": True}
-            )
+            create_params = {
+                "messages": messages,
+                "model": self.model_name,
+                "tools": openai_tools if openai_tools else None,
+                "tool_choice": "auto" if openai_tools else None,
+                "stream": True,
+            }
+            
+            # Only OpenAI (and possibly others) support stream_options for usage
+            if self.config.type == "openai":
+                create_params["stream_options"] = {"include_usage": True}
+
+            stream = await self.client.chat.completions.create(**create_params)
             
             tool_call_accumulator = {} 
 
@@ -452,14 +461,19 @@ class OpenAICompatibleProvider(LLMProvider):
         openai_tools = self.tools.to_openai_toolbox()
 
         try:
-            stream = await self.client.chat.completions.create(
-                messages=messages,
-                model=self.model_name,
-                tools=openai_tools if openai_tools else None,
-                tool_choice="auto" if openai_tools else None,
-                stream=True,
-                stream_options={"include_usage": True}
-            )
+            create_params = {
+                "messages": messages,
+                "model": self.model_name,
+                "tools": openai_tools if openai_tools else None,
+                "tool_choice": "auto" if openai_tools else None,
+                "stream": True,
+            }
+            
+            # Only OpenAI (and possibly others) support stream_options for usage
+            if self.config.type == "openai":
+                create_params["stream_options"] = {"include_usage": True}
+
+            stream = await self.client.chat.completions.create(**create_params)
             
             tool_call_accumulator = {} 
 

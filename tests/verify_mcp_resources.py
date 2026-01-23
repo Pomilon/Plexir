@@ -6,7 +6,7 @@ import sys
 sys.path.append(os.getcwd())
 
 from plexir.mcp.client import MCPClient
-from plexir.core.config_manager import ProviderConfig
+from plexir.core.config_manager import MCPServerConfig
 from plexir.tools.base import ToolRegistry
 
 async def verify():
@@ -14,14 +14,13 @@ async def verify():
     db_path = os.path.abspath("tests/test_mcp.db")
     
     # Configure the local mock MCP server
-    config = ProviderConfig(
-        name="MockServer",
-        type="mcp",
-        model_name="mcp",
-        base_url=f"stdio://python3 {os.path.abspath('tests/mock_mcp_server.py')}"
+    config = MCPServerConfig(
+        command="python3",
+        args=[os.path.abspath('tests/mock_mcp_server.py')],
+        env={}
     )
     
-    client = MCPClient(config, registry)
+    client = MCPClient("MockServer", config, registry)
     print(f"Connecting to MCP server at {db_path}...")
     
     try:

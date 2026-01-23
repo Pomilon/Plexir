@@ -16,7 +16,7 @@ from plexir.tools.definitions import (
     GitPushTool, GitPullTool,
     GitHubCreateIssueTool, GitHubCreatePRTool,
     WebSearchTool, BrowseURLTool, CodebaseSearchTool, GetDefinitionsTool, GetRepoMapTool, ScratchpadTool,
-    ExportSandboxTool
+    ExportSandboxTool, DelegateToAgentTool, SaveMemoryTool, SearchMemoryTool
 )
 from plexir.tools.sandbox import PythonSandboxTool, PersistentSandbox
 from plexir.core import context
@@ -105,7 +105,7 @@ class Router:
             GitPushTool(), GitPullTool(),
             GitHubCreateIssueTool(), GitHubCreatePRTool(),
             WebSearchTool(), BrowseURLTool(), CodebaseSearchTool(), GetDefinitionsTool(), GetRepoMapTool(), ScratchpadTool(),
-            ExportSandboxTool()
+            ExportSandboxTool(), DelegateToAgentTool(), SaveMemoryTool(), SearchMemoryTool()
         ]
         for tool in tools:
             if self.sandbox:
@@ -135,7 +135,7 @@ class Router:
             try:
                 if p_config.type == "gemini":
                     self.providers.append(GeminiProvider(p_config, self.registry))
-                elif p_config.type in ["openai", "groq", "ollama"]:
+                elif p_config.type in ["openai", "groq", "ollama", "cerebras"]:
                     self.providers.append(OpenAICompatibleProvider(p_config, self.registry))
                 elif p_config.type == "mcp":
                     # Hybrid Support: Convert legacy ProviderConfig to MCPServerConfig

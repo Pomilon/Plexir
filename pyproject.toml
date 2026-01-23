@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "plexir"
-version = "1.6.0"
+version = "1.7.0"
 authors = [
   { name = "Pomilon", email = "pomilon@proton.me" },
 ]
@@ -33,7 +33,9 @@ dependencies = [
     "keyring>=24.0.0",
     "google-auth>=2.27.0",
     "google-auth-oauthlib>=1.2.0",
-    "httpx>=0.27.0"
+    "httpx>=0.27.0",
+    "chromadb>=0.4.0",
+    "sentence-transformers>=2.2.0"
 ]
 
 [project.scripts]
