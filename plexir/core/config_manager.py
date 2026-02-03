@@ -60,6 +60,7 @@ class ProviderConfig(BaseModel):
         "auto", 
         description="Authentication mode: 'auto', 'api_key', or 'oauth' (Gemini only)."
     )
+    context_limit: Optional[int] = Field(None, description="Max input tokens. If None, uses model default.")
     
     def get_api_key(self) -> Optional[str]:
         """Resolves the API key securely."""
@@ -120,6 +121,34 @@ class AppConfig(BaseModel):
             "llama3.1-70b": (0.60, 0.60),
         },
         description="Pricing map: model -> (prompt_price, completion_price) per 1M tokens."
+    )
+    model_context_windows: Dict[str, int] = Field(
+        default_factory=lambda: {
+            # --- Google Gemini Series ---
+            "gemini-3-pro-preview": 2000000,
+            "gemini-3-flash-preview": 1000000,
+            "gemini-2.5-pro": 2000000,
+            "gemini-2.5-flash": 1000000,
+            "gemini-2.5-flash-lite": 1000000,
+            
+            # --- Anthropic Claude Series ---
+            "claude-4.5-sonnet": 200000,
+            "claude-4.5-haiku": 200000,
+            "claude-4-opus": 200000,
+
+            # --- OpenAI Series ---
+            "gpt-4o": 128000,
+            "gpt-4o-mini": 128000,
+            "gpt-oss-120b": 8192,
+            
+            # --- Specialized ---
+            "deepseek-v3": 64000,
+            "deepseek-reasoner": 64000,
+            "llama-3.3-70b-versatile": 128000,
+            "llama3.1-8b": 8192,
+            "llama3.1-70b": 8192,
+        },
+        description="Default context window sizes (in tokens) for known models."
     )
     macros: Dict[str, List[str]] = Field(default_factory=dict)
     tool_configs: Dict[str, Dict[str, str]] = Field(default_factory=dict)

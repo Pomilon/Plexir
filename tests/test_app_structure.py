@@ -10,8 +10,3 @@ def test_app_structure():
     
     # Verify helper exists
     assert hasattr(app, '_add_message'), "PlexirApp is missing '_add_message' method"
-    
-    print("PlexirApp structure verified successfully.")
-
-if __name__ == "__main__":
-    test_app_structure()

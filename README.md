@@ -4,7 +4,7 @@
 
 ![Plexir UI](assets/image.png)
 
-[![Version](https://img.shields.io/badge/version-1.7.0-blue.svg)](https://github.com/pomilon/plexir)
+[![Version](https://img.shields.io/badge/version-1.8.0-blue.svg)](https://github.com/pomilon/plexir)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 ---
@@ -18,6 +18,7 @@
     - **Persistent Memory Bank**: Semantic storage (`chromadb`) for long-term facts using `/memory save`.
     - **Rolling Summarization**: Automatically condenses long histories.
     - **Message Pinning**: `/session pin` ensures critical context is never lost.
+    - **Context Window Management**: Intelligent token counting and history pruning ensures conversations never exceed model limits, preventing failover loops.
 - **Persistent Docker Sandbox**: Launch with `--sandbox` to give the AI its own persistent Linux "computer." All tools (file system, git, shell) are automatically redirected inside the container.
 - **Deep MCP Integration**: Fully supports **Model Context Protocol (MCP)**, including dynamic discovery of tools, **Resources**, **Resource Templates**, and **Prompts** from MCP servers.
 - **Smart Agent Capabilities**:
