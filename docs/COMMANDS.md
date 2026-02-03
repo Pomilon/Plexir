@@ -4,7 +4,7 @@ This document provides a comprehensive guide to all available slash commands in 
 
 ---
 
-## 🚀 General Commands
+## General Commands
 
 ### `/help`
 Displays a summary of all primary slash commands.
@@ -23,7 +23,7 @@ Exits the Plexir application cleanly, stopping the sandbox if it's running.
 
 ---
 
-## ⚙️ Configuration (`/config`)
+## Configuration (`/config`)
 
 Manages providers, tool settings, and application preferences.
 
@@ -33,10 +33,15 @@ Shows the current provider failover order, tool configurations, and other app se
 #### `/config set <provider_name> <key> <value>`
 Updates a specific property for a provider.
 - **`<provider_name>`**: The name of the provider (e.g., `"Gemini Primary"`). Use quotes if it contains spaces.
-- **`<key>`**: The property to change (`api_key`, `model_name`, `type`, `base_url`).
+- **`<key>`**: The property to change (`api_key`, `model_name`, `type`, `base_url`, `context_limit`).
 - **`<value>`**: The new value.
-- **Example**: `/config set "Gemini Primary" api_key ghp_...`
+- **Example**: `/config set "Gemini Primary" context_limit 50000`
 - **Example**: `/config set "Groq Backup" model_name llama3-70b-8192`
+
+#### `/config budget <amount>`
+Sets a maximum dollar amount for the current session to prevent runaway costs.
+- **Example**: `/config budget 0.50`
+- **Example**: `/config budget 0` (disables limit)
 
 #### `/config tool <domain> <key> <value>`
 Sets a configuration value for a specific tool suite. This is how you provide tokens for external services.
@@ -67,7 +72,7 @@ Changes the failover priority of a provider.
 
 ---
 
-## 💾 Session Management (`/session`)
+## Session Management (`/session`)
 
 Saves and loads chat histories.
 
@@ -88,7 +93,7 @@ Deletes a saved session file.
 
 ---
 
-## 📹 Macro Management (`/macro`)
+## Macro Management (`/macro`)
 
 Records and plays back sequences of commands and prompts.
 

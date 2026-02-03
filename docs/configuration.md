@@ -26,6 +26,27 @@ Instead of plain text, you can use:
 - `env:VARIABLE_NAME`: Read from environment variables.
 - `keyring:username`: Read from the system keyring (service: `plexir`).
 
+## Context Management
+
+Plexir automatically manages the context window to prevent model errors when conversations get too long.
+
+### Automatic Limits
+Plexir comes with pre-configured token limits for popular models (e.g., 2M tokens for Gemini 1.5 Pro, 128k for GPT-4o). When the conversation history exceeds this limit, Plexir will:
+1.  **Preserve** the most recent messages.
+2.  **Preserve** system instructions.
+3.  **Summarize/Distill** the older parts of the conversation to save space while retaining context.
+
+### Manual Configuration (`context_limit`)
+You can override the default limit for any provider. This is useful for:
+- Testing how models behave with shorter context.
+- Forcing stricter limits on "Preview" models to save costs.
+
+To set a strict 50,000 token limit on a provider:
+```bash
+/config set "Gemini Primary" context_limit 50000
+```
+*Set to `0` or `null` to use the model's default.*
+
 ## Failover & Retries
 
 Plexir manages providers using a priority order defined in your config.

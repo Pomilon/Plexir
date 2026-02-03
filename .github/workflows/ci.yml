@@ -20,12 +20,11 @@ jobs:
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
-        pip install -e .
-        pip install pytest pytest-asyncio beautifulsoup4 requests pydantic-settings
+        pip install -e ".[dev]"
         
-    - name: Run unit tests
+    - name: Run all tests
       run: |
-        pytest tests/test_components.py tests/test_v1_2_features.py tests/test_web_v1_3.py
+        pytest tests/
         
     - name: Set up Docker
       uses: docker-practice/actions-setup-docker@master

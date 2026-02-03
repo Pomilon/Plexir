@@ -508,10 +508,18 @@ class PlexirApp(App):
                             warning = Static(f"⚠️ FAILOVER: SWITCHING TO [bold]{new_name}[/bold]...", classes="failover-warning")
                             await chat_scroll.mount(warning)
                             chat_scroll.scroll_end(animate=False)
+                            # Reset buffer for new stream
+                            current_text_buffer = ""
+                            current_text_widget.update("")
+
                         elif chunk.type == RouterEvent.RETRY:
                             data = chunk.data
                             retry_msg = f"⏳ [yellow]RATE LIMIT HIT[/yellow] on {data['provider']}. Retrying ({data['attempt']}/{data['max']})..."
                             tool_status.set_status(retry_msg, running=True)
+                            # Reset buffer for retry
+                            current_text_buffer = ""
+                            current_text_widget.update("")
+
                         elif chunk.type == RouterEvent.USAGE:
                             data = chunk.data
                             stats.tokens = self.router.session_usage["total_tokens"]

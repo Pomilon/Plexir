@@ -1,15 +1,15 @@
-# Plexir 🌌
+# Plexir
 
 **Plexir** is a modular, secure, and beautiful AI-powered terminal workspace. Designed for developers who live in the CLI, it combines multi-provider LLM orchestration, advanced agentic tools, and a secure, persistent Docker sandbox into a single keyboard-centric interface.
 
 ![Plexir UI](assets/image.png)
 
-[![Version](https://img.shields.io/badge/version-1.7.0-blue.svg)](https://github.com/pomilon/plexir)
+[![Version](https://img.shields.io/badge/version-1.8.0-blue.svg)](https://github.com/pomilon/plexir)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 ---
 
-## 🚀 Features
+## Features
 
 - **Multi-Provider Failover**: Seamlessly switch between Gemini, Groq, Cerebras, and OpenAI-compatible APIs. If one model hits a quota, Plexir automatically fails over to the next in your priority list.
 - **Economics & Metrics**: Real-time **Token Tracking** and **Cost Estimation** in the sidebar. Set a session budget via `/config budget` to prevent runaway costs.
@@ -18,6 +18,7 @@
     - **Persistent Memory Bank**: Semantic storage (`chromadb`) for long-term facts using `/memory save`.
     - **Rolling Summarization**: Automatically condenses long histories.
     - **Message Pinning**: `/session pin` ensures critical context is never lost.
+    - **Context Window Management**: Intelligent token counting and history pruning ensures conversations never exceed model limits, preventing failover loops.
 - **Persistent Docker Sandbox**: Launch with `--sandbox` to give the AI its own persistent Linux "computer." All tools (file system, git, shell) are automatically redirected inside the container.
 - **Deep MCP Integration**: Fully supports **Model Context Protocol (MCP)**, including dynamic discovery of tools, **Resources**, **Resource Templates**, and **Prompts** from MCP servers.
 - **Smart Agent Capabilities**:
@@ -42,7 +43,7 @@
 
 ---
 
-## 📦 Installation
+## Installation
 
 ### Prerequisites
 - Python 3.10 or higher.
@@ -61,7 +62,7 @@
 
 ---
 
-## 🛠 Usage
+## Usage
 
 Start Plexir from any terminal:
 ```bash
@@ -90,7 +91,7 @@ plexir --sandbox
 
 ---
 
-## ⚙️ Configuration
+## Configuration
 
 Plexir stores its configuration in `~/.plexir/config.json`. You can manage this file manually or using the in-app `/config` commands. 
 
@@ -101,7 +102,7 @@ Example failover hierarchy:
 
 ---
 
-## 📄 Documentation
+## Documentation
 
 Detailed guides are available in the `docs/` directory:
 - [Getting Started](docs/getting_started.md)
@@ -113,14 +114,14 @@ Detailed guides are available in the `docs/` directory:
 
 ---
 
-## 🤝 Contributing
+## Contributing
 
 Contributions are welcome! Please see our [Contributing Guidelines](CONTRIBUTING.md) and [Code of Conduct](CODE_OF_CONDUCT.md) for more details.
 
-## 🛡️ Security
+## Security
 
 If you discover a security vulnerability, please see our [Security Policy](SECURITY.md).
 
-## ⚖️ License
+## License
 
 Plexir is released under the [MIT License](LICENSE).

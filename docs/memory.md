@@ -2,7 +2,7 @@
 
 Plexir uses advanced techniques to manage long-running conversations, ensuring the model remains coherent even as the history grows.
 
-## 🧠 Persistent Memory Bank (New in v1.7)
+## Persistent Memory Bank (New in v1.7)
 
 Plexir now includes a **Long-Term Memory** system powered by `chromadb`. This allows the agent to store and recall specific facts across different sessions.
 
@@ -20,7 +20,7 @@ You can prompt the agent to remember things directly:
 Or ask it to recall:
 > "Where did I say my keys were?"
 
-## 🔄 Rolling Summarization
+## Rolling Summarization
 
 When a conversation history becomes too large (exceeding 40 messages), Plexir automatically triggers **Rolling Summarization**. 
 
@@ -28,7 +28,7 @@ When a conversation history becomes too large (exceeding 40 messages), Plexir au
 2. **Context Preservation**: This summary is injected at the start of the conversation, allowing the model to remember high-level decisions and context while clearing out detailed token-heavy noise.
 3. **Automatic**: This happens in the background without user intervention.
 
-## 📌 Message Pinning
+## Message Pinning
 
 You can manually protect critical messages from being summarized or pruned using **Context Pinning**.
 
@@ -44,6 +44,6 @@ Use the `/session pin` command followed by the message number (visible in the hi
 /session unpin 5
 ```
 
-## 🧠 Distillation (Failover)
+## Distillation (Failover)
 
 During a **Provider Failover** (e.g., Gemini Primary hitting a quota), Plexir uses a "Distillation" process to transfer only the most essential recent context to the backup provider. This ensures a smooth transition with minimal latency and token waste.
