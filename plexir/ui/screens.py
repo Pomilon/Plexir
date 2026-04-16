@@ -5,9 +5,10 @@ Includes confirmation dialogs for critical actions.
 
 import os
 import datetime
+import asyncio
 from textual.app import ComposeResult
 from textual.screen import ModalScreen
-from textual.widgets import Button, Label, Static, Input
+from textual.widgets import Button, Label, Static, Input, TextArea
 from textual.containers import Vertical, Horizontal
 from plexir.ui.diff_viewer import DiffViewer
 

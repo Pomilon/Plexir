@@ -4,7 +4,7 @@
 
 ![Plexir UI](assets/image.png)
 
-[![Version](https://img.shields.io/badge/version-1.8.0-blue.svg)](https://github.com/pomilon/plexir)
+[![Version](https://img.shields.io/badge/version-1.9.0-blue.svg)](https://github.com/pomilon/plexir)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 ---
@@ -12,31 +12,32 @@
 ## Features
 
 - **Multi-Provider Failover**: Seamlessly switch between Gemini, Groq, Cerebras, and OpenAI-compatible APIs. If one model hits a quota, Plexir automatically fails over to the next in your priority list.
-- **Economics & Metrics**: Real-time **Token Tracking** and **Cost Estimation** in the sidebar. Set a session budget via `/config budget` to prevent runaway costs.
-- **Advanced Reasoning Support**: Automatically filters model "thinking" blocks into collapsible widgets and provides a **Live Status Spinner** during reasoning.
+- **Accuracy & Economics**: 
+    - **Native Token Counting**: Integrated Gemini native token counting API for 100% accurate measurement.
+    - **Proactive Context Management**: Automatic pruning/summarization when context reaches 90% capacity to prevent truncation errors.
+    - **Cost Estimation**: Real-time tracking in the sidebar. Set a session budget via `/config budget`.
+- **Deep Reasoning Support**: Native support for `reasoning_content` (DeepSeek/OpenRouter) with configurable transparency (toggle blocks with `/config reasoning`).
+- **Responsive Interaction**:
+    - **Message Queuing**: Submit messages while the AI is busy; they appear in a "queued" state and process sequentially.
+    - **Interactive Queue Management**: Click a queued message to "unroll" the queue and pull messages back to the input for editing.
 - **Coherent Memory**:
     - **Persistent Memory Bank**: Semantic storage (`chromadb`) for long-term facts using `/memory save`.
+    - **Session-Scoped Scratchpad**: Isolated planning space (`scratchpad` tool) that persists within a session but doesn't pollute global history.
     - **Rolling Summarization**: Automatically condenses long histories.
     - **Message Pinning**: `/session pin` ensures critical context is never lost.
-    - **Context Window Management**: Intelligent token counting and history pruning ensures conversations never exceed model limits, preventing failover loops.
 - **Persistent Docker Sandbox**: Launch with `--sandbox` to give the AI its own persistent Linux "computer." All tools (file system, git, shell) are automatically redirected inside the container.
-- **Deep MCP Integration**: Fully supports **Model Context Protocol (MCP)**, including dynamic discovery of tools, **Resources**, **Resource Templates**, and **Prompts** from MCP servers.
+- **Deep MCP Integration**: Fully supports **Model Context Protocol (MCP)**, including dynamic discovery of tools, **Resources**, and **Prompts**.
 - **Smart Agent Capabilities**:
     - **Delegation**: `delegate_to_agent` allows spawning specialized sub-agents for complex tasks.
-    - **RAG & Context**: `codebase_search` allows natural language queries across your codebase. `get_definitions` quickly maps file structures.
-    - **Planning**: Built-in `scratchpad` memory for long-term planning and note-taking.
-    - **Visual Safety**: Critical actions like writing files show a **Rich Visual Diff** (Red/Green) in the confirmation modal before execution.
+    - **RAG & Context**: `codebase_search` allows natural language queries across your codebase.
+    - **Visual Safety**: Critical actions like writing files show a **Rich Visual Diff** (Red/Green) in the confirmation modal.
 - **Advanced Agentic Tools**:
     - **Filesystem**: `read_file`, `write_file`, `list_directory`, `edit_file` (precise patching).
-    - **Git Suite**: `git_status`, `git_diff`, `git_add`, `git_commit`, `git_checkout`, `git_branch`.
-    - **Enhanced Web Capabilities**: API-backed `web_search` (Tavily, Serper) with DuckDuckGo fallback and clean content extraction via `browse_url`.
-    - **Code Execution**: `python_sandbox` for isolated logic testing.
-- **Human-in-the-Loop (HITL)**: Safety first. Critical actions require explicit user confirmation.
-    - **Visual Diffs**: Review changes before they happen.
-    - **Skip/Stop**: Granular control to skip a specific tool or stop the entire process.
+    - **Dynamic Verbosity**: Level-based control over tool output detail via `/config verbosity`.
+    - **Git Suite**: Fully featured git integration including diffs and commits.
+    - **Web Capabilities**: API-backed `web_search` and clean extraction via `browse_url`.
 - **Modern TUI**: Built with [Textual](https://textual.textualize.io/), featuring:
     - **Collapsible Tool Outputs**: Keep your chat clean while preserving execution details.
-    - **Dynamic Themes**: `tokyo-night`, `hacker`, `plexir-light`.
     - **Live Workspace**: Real-time file tree updates.
     - **Command Palette**: `Ctrl+P` for quick actions.
 - **Macros & Sessions**: Record complex workflows into macros and persist chat histories across sessions.

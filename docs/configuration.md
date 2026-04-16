@@ -30,22 +30,21 @@ Instead of plain text, you can use:
 
 Plexir automatically manages the context window to prevent model errors when conversations get too long.
 
-### Automatic Limits
-Plexir comes with pre-configured token limits for popular models (e.g., 2M tokens for Gemini 1.5 Pro, 128k for GPT-4o). When the conversation history exceeds this limit, Plexir will:
-1.  **Preserve** the most recent messages.
-2.  **Preserve** system instructions.
-3.  **Summarize/Distill** the older parts of the conversation to save space while retaining context.
+### Native Token Counting (Gemini)
+For Gemini providers, Plexir uses the **native `countTokens` API** to ensure 100% accurate token measurement. For other providers, it uses a word-based heuristic (1.3 tokens per word) to estimate usage.
+
+### Proactive Pruning
+When the current conversation history reaches **90% of the provider's context limit**, Plexir will proactively:
+1.  **Summarize/Distill** older messages (using the active LLM) to save space while retaining critical facts.
+2.  **Notify** the user with a system message in the chat.
+3.  **Accumulate** the summary at the top of the history to ensure continuity.
 
 ### Manual Configuration (`context_limit`)
-You can override the default limit for any provider. This is useful for:
-- Testing how models behave with shorter context.
-- Forcing stricter limits on "Preview" models to save costs.
+You can override the default limit for any provider. This is useful for testing shorter windows or managing costs on preview models.
+- **Example**: `/config set "Gemini Primary" context_limit 50000`
+- **Example**: `/config set "Groq Backup" context_limit 8000`
 
-To set a strict 50,000 token limit on a provider:
-```bash
-/config set "Gemini Primary" context_limit 50000
-```
-*Set to `0` or `null` to use the model's default.*
+*Setting to `0` or `null` will use the model's default limit.*
 
 ## Failover & Retries
 

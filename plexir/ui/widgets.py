@@ -4,41 +4,57 @@ Includes MessageBubbles, StatsPanel, and WorkspaceTree.
 """
 
 import itertools
+from textual import events
 from textual.app import ComposeResult
 from textual.containers import Container, Horizontal
 from textual.reactive import reactive
 from textual.widgets import Static, Label, Markdown as MarkdownWidget, DirectoryTree, Collapsible, LoadingIndicator
+from plexir.core.config_manager import config_manager
 
 class MessageContent(MarkdownWidget):
     """Widget to display message content with Markdown support."""
-    pass
 
 class MessageBubble(Container):
     """Wraps a single message (user, AI, or system) with a header and content."""
-    
-    def __init__(self, role: str, **kwargs):
+
+    class Clicked(events.Event):
+        """Event emitted when the bubble is clicked."""
+        def __init__(self, bubble: "MessageBubble"):
+            super().__init__()
+            self.bubble = bubble
+
+    def __init__(self, role: str, content: str = "", **kwargs):
         super().__init__(**kwargs)
         self.role = role
+        self.initial_content = content
         self.add_class(f"message-{role}")
+
+    def on_click(self, event: events.Click) -> None:
+        if "queued" in self.classes:
+            event.stop()
+            self.post_message(self.Clicked(self))
 
     def compose(self) -> ComposeResult:
         """Composes the message bubble layout."""
-        role_map = {"user": "User", "model": "Plexir", "system": "System"}
-        role_label = role_map.get(self.role, self.role.capitalize())
-        
+        # Map roles to friendly labels
+        role_map = {"user": "👤 YOU", "model": "🤖 AI", "system": "⚙️ SYSTEM"}
+        role_label = role_map.get(self.role, self.role.upper())
+
         with Horizontal(classes="message-header"):
             yield Label(role_label, classes=f"message-author role-{self.role}")
-            
-        yield MessageContent("", classes="message-content")
+
+        yield MessageContent(self.initial_content, id="message-text", classes="message-content")
 
 class StatsPanel(Static):
+
     """Sidebar panel displaying real-time session statistics."""
     
     model_name = reactive("Model Name")
     status = reactive("Idle")
     latency = reactive(0.0)
     sandbox_active = reactive(False)
-    tokens = reactive(0)
+    ctx_tokens = reactive(0)
+    total_tokens = reactive(0)
     cost = reactive(0.0)
 
     def compose(self) -> ComposeResult:
@@ -52,8 +68,12 @@ class StatsPanel(Static):
             yield Label(self.status, id="stat-status", classes="stat-value")
 
         with Horizontal(classes="stat-row"):
-            yield Label("TOKENS", classes="stat-label")
-            yield Label(f"{self.tokens}", id="stat-tokens", classes="stat-value")
+            yield Label("CONTEXT", classes="stat-label")
+            yield Label(f"{self.ctx_tokens}", id="stat-ctx-tokens", classes="stat-value")
+
+        with Horizontal(classes="stat-row"):
+            yield Label("TOTAL", classes="stat-label")
+            yield Label(f"{self.total_tokens}", id="stat-total-tokens", classes="stat-value")
 
         with Horizontal(classes="stat-row"):
             yield Label("COST", classes="stat-label")
@@ -88,10 +108,17 @@ class StatsPanel(Static):
         except Exception:
             pass
 
-    def watch_tokens(self, value: int):
-        """Updates the tokens label."""
+    def watch_ctx_tokens(self, value: int):
+        """Updates the context tokens label."""
         try:
-            self.query_one("#stat-tokens", Label).update(str(value))
+            self.query_one("#stat-ctx-tokens", Label).update(str(value))
+        except Exception:
+            pass
+
+    def watch_total_tokens(self, value: int):
+        """Updates the total tokens label."""
+        try:
+            self.query_one("#stat-total-tokens", Label).update(str(value))
         except Exception:
             pass
 
@@ -150,19 +177,23 @@ class ToolOutput(Container):
         self.args_str = args
         self.result_str = result
         self.add_class("tool-output")
-
     def compose(self) -> ComposeResult:
+        """Composes the tool output layout."""
         # Title/Header
         yield Label(f"🛠️ {self.tool_name}", classes="tool-header")
-        
+
+        verbosity = config_manager.config.verbosity
+
         # Args
         safe_args = str(self.args_str)
-        if len(safe_args) > 80: safe_args = safe_args[:80] + "..."
+        if verbosity == 0 and len(safe_args) > 120: 
+            safe_args = safe_args[:120] + "..."
         yield Label(f"Args: {safe_args}", classes="tool-args")
-        
+
         # Result
         result_str = str(self.result_str)
-        if len(result_str) > 2000:
+        if verbosity == 0 and len(result_str) > 2000:
              result_str = result_str[:2000] + "\n... (truncated)"
-             
+
         yield MarkdownWidget(f"```text\n{result_str}\n```", classes="tool-result")
+

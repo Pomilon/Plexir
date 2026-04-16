@@ -235,6 +235,10 @@ class CommandProcessor:
                 return await self._config_reorder(sub_args)
             elif subcommand == "debug":
                 return self._config_debug(sub_args)
+            elif subcommand == "verbosity":
+                return self._config_verbosity(sub_args)
+            elif subcommand == "reasoning":
+                return self._config_reasoning(sub_args)
             elif subcommand == "budget":
                 return self._config_budget(sub_args)
             elif subcommand == "tool":
@@ -265,6 +269,8 @@ class CommandProcessor:
 - `/config delete <name>`: Delete a provider.
 - `/config reorder <name> <up|down>`: Change failover order.
 - `/config debug <on|off>`: Toggle debug mode.
+- `/config verbosity <0|1|2>`: Set verbosity level (0=Normal, 1=Verbose Tools).
+- `/config reasoning <on|off>`: Toggle expanded reasoning blocks by default.
 - `/config budget <value>`: Set session cost limit (e.g. 0.50). 0 for no limit.
 """
 
@@ -290,6 +296,8 @@ class CommandProcessor:
         msg += "\n--- Application Settings ---\n"
         msg += f"Theme: `{config_manager.config.theme}`\n"
         msg += f"Debug Mode: `{'On' if config_manager.config.debug_mode else 'Off'}`\n"
+        msg += f"Verbosity: `{config_manager.config.verbosity}`\n"
+        msg += f"Expanded Reasoning: `{'On' if config_manager.config.expanded_reasoning else 'Off'}`\n"
         msg += f"Session Budget: `${config_manager.config.session_budget:.2f}`\n"
         
         # Tool specific configs
@@ -325,6 +333,11 @@ class CommandProcessor:
             if value not in ("auto", "api_key", "oauth"):
                 return f"Error: Invalid auth_mode '{value}'. Use: auto, api_key, oauth."
             p_config.auth_mode = value
+        elif key == "context_limit":
+            try:
+                p_config.context_limit = int(value)
+            except ValueError:
+                return "Error: context_limit must be a number."
         else:
             return f"Error: Unknown property '{key}'."
         
@@ -375,13 +388,35 @@ class CommandProcessor:
             return f"Error: {e}"
 
     def _config_debug(self, args: List[str]) -> str:
-        """Toggles debug mode on or off."""
+        """Toggles debug mode."""
         if not args: return "Usage: `/config debug <on|off>`"
         state = args[0].lower()
         if state in ("on", "off"):
             config_manager.update_app_setting("debug_mode", state == "on")
             return f"Debug mode set to {state}."
         return "Error: State must be 'on' or 'off'."
+
+    def _config_verbosity(self, args: List[str]) -> str:
+        """Sets the application verbosity level."""
+        if not args: return "Usage: `/config verbosity <0|1|2>`"
+        try:
+            val = int(args[0])
+            if val not in (0, 1, 2):
+                return "Error: Verbosity must be 0, 1, or 2."
+            config_manager.update_app_setting("verbosity", val)
+            return f"Verbosity level set to {val}."
+        except ValueError:
+            return "Error: Verbosity must be a number."
+
+    def _config_reasoning(self, args: List[str]) -> str:
+        """Toggles expanded reasoning process blocks."""
+        if not args: return "Usage: `/config reasoning <on|off>`"
+        state = args[0].lower()
+        if state in ("on", "off"):
+            config_manager.update_app_setting("expanded_reasoning", state == "on")
+            return f"Expanded reasoning set to {state}."
+        return "Error: State must be 'on' or 'off'."
+
 
     # --- Session Management ---
 
@@ -395,11 +430,19 @@ class CommandProcessor:
 
         try:
             if subcommand == "save":
-                return await self.session_manager.save_session_async(self.app.history, sub_args[0] if sub_args else None)
+                name = sub_args[0] if sub_args else datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+                res = await self.session_manager.save_session_async(self.app.history, name)
+                # Update router session_id to match saved session
+                self.app.router.session_id = name
+                await self.app.router.reload_providers()
+                return res
             elif subcommand == "load":
                 if not sub_args: return "Usage: `/session load <name>`"
                 name = sub_args[0]
                 self.app.history = self.session_manager.load_session(name)
+                # Update router session_id to match loaded session for scratchpad consistency
+                self.app.router.session_id = name
+                await self.app.router.reload_providers()
                 return f"Session '{name}' loaded. Chat history updated."
             elif subcommand == "list":
                 sessions = self.session_manager.list_sessions()

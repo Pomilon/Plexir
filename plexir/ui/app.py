@@ -7,6 +7,7 @@ import asyncio
 import logging
 import os
 import time
+import threading
 from typing import List, Dict, Any, Optional
 import subprocess
 
@@ -98,7 +99,13 @@ class PlexirApp(App):
         self.register_theme(self.HACKER)
         self.register_theme(self.PLEXIR_LIGHT)
         
-        self.router = Router(sandbox_enabled=sandbox_enabled, mount_cwd=mount_cwd)
+        # Unique session ID for this run
+        self.session_id = time.strftime("%Y%m%d_%H%M%S")
+        self.router = Router(
+            sandbox_enabled=sandbox_enabled, 
+            mount_cwd=mount_cwd, 
+            session_id=self.session_id
+        )
         self.session_manager = SessionManager()
         self.command_processor = CommandProcessor(self, self.session_manager)
         self.history: List[Dict[str, Any]] = []
@@ -115,7 +122,9 @@ class PlexirApp(App):
         self.recorded_commands: List[str] = []
 
         # Queue state
-        self.message_queue: asyncio.Queue = asyncio.Queue()
+        self.message_queue_list: List[str] = []
+        self.queue_condition = asyncio.Condition()
+        self.queued_bubbles: List[tuple[str, MessageBubble]] = []
 
     async def on_mount(self) -> None:
         """Initializes providers, UI state, and theme on startup."""
@@ -139,12 +148,31 @@ class PlexirApp(App):
         except Exception:
             self.theme = "tokyo-night"
 
-        # Start queue processor
+        # Start queue processor in background worker
         self.process_queue()
 
     def compose(self) -> ComposeResult:
         """Composes the main application layout."""
         yield from compose_main_layout()
+
+    async def push_screen_wait(self, screen: Any) -> Any:
+        """Pushes a modal screen and waits for its result."""
+        future: asyncio.Future = asyncio.Future()
+        
+        def on_dismiss(result: Any) -> None:
+            if not future.done():
+                if self._thread_id == threading.get_ident():
+                    future.set_result(result)
+                else:
+                    self.call_from_thread(future.set_result, result)
+        
+        # Check if we are already in the main thread
+        if self._thread_id == threading.get_ident():
+            self.push_screen(screen, callback=on_dismiss)
+        else:
+            self.call_from_thread(self.push_screen, screen, on_dismiss)
+            
+        return await future
 
     # --- Actions ---
 
@@ -278,7 +306,21 @@ class PlexirApp(App):
             return
         
         text_area.text = ""
-        self.message_queue.put_nowait(user_text)
+        
+        # Immediate UI feedback: Mount a "queued" bubble
+        bubble = MessageBubble(role="user", content=user_text)
+        bubble.add_class("queued")
+        self.query_one("#chat-scroll", VerticalScroll).mount(bubble)
+        self.query_one("#chat-scroll", VerticalScroll).scroll_end(animate=True)
+
+        self.queued_bubbles.append((user_text, bubble))
+        asyncio.create_task(self._add_to_queue(user_text))
+
+    async def _add_to_queue(self, text: str):
+        """Adds a message to the internal queue and notifies the processor."""
+        async with self.queue_condition:
+            self.message_queue_list.append(text)
+            self.queue_condition.notify_all()
 
     # --- Event Handlers ---
 
@@ -288,6 +330,56 @@ class PlexirApp(App):
             if self.focused and self.focused.id == "user-input":
                 event.stop()
                 self.action_submit()
+
+    @on(MessageBubble.Clicked)
+    async def on_bubble_clicked(self, event: MessageBubble.Clicked) -> None:
+        """Moves the clicked message and all subsequent queued messages back to the input."""
+        bubble = event.bubble
+        if "queued" not in bubble.classes:
+            return
+        
+        # Find which queued message this is
+        target_idx = -1
+        for i, (text, b) in enumerate(self.queued_bubbles):
+            if b == bubble:
+                target_idx = i
+                break
+        
+        if target_idx == -1:
+            return
+
+        # We pull back EVERYTHING from target_idx to the end
+        async with self.queue_condition:
+            # 1. Identify chunks to pull back
+            to_pull_back = self.queued_bubbles[target_idx:]
+            
+            # 2. Update internal lists
+            self.message_queue_list = self.message_queue_list[:target_idx]
+            self.queued_bubbles = self.queued_bubbles[:target_idx]
+            
+            # 3. Concatenate text and remove bubbles from UI
+            texts = []
+            for text, b in to_pull_back:
+                texts.append(text)
+                b.remove()
+            
+            combined_text = "\n\n".join(texts)
+            
+            # 4. Move text to main input and focus
+            input_widget = self.query_one("#user-input", TextArea)
+            
+            # If input already has text, append with double newline
+            if input_widget.text.strip():
+                input_widget.text = input_widget.text.rstrip() + "\n\n" + combined_text
+            else:
+                input_widget.text = combined_text
+                
+            input_widget.focus()
+            # Move cursor to end
+            final_text = input_widget.text
+            input_widget.move_cursor((len(final_text.split("\n")) - 1, len(final_text.split("\n")[-1])))
+            
+            self.notify(f"Pulled back {len(to_pull_back)} message(s) for editing.")
 
     @on(TextArea.Changed, "#user-input")
     def on_input_changed(self, event: TextArea.Changed) -> None:
@@ -309,21 +401,34 @@ class PlexirApp(App):
 
     @work(exclusive=True)
     async def process_queue(self):
-        """Sequentially processes messages from the queue."""
+        """Sequentially processes messages from the queue in a background worker."""
         while True:
-            user_text = await self.message_queue.get()
+            async with self.queue_condition:
+                while not self.message_queue_list:
+                    await self.queue_condition.wait()
+                user_text = self.message_queue_list.pop(0)
+            
             try:
                 await self.handle_user_message(user_text)
-            finally:
-                self.message_queue.task_done()
+            except Exception as e:
+                logger.error(f"Error in process_queue: {e}")
 
     async def handle_user_message(self, user_text: str):
         """Processes a single user message."""
         input_widget = self.query_one("#user-input", TextArea)
-
+        
+        # Pull from queued_bubbles if available
+        bubble = None
+        if self.queued_bubbles and self.queued_bubbles[0][0] == user_text:
+            _, bubble = self.queued_bubbles.pop(0)
+            bubble.remove_class("queued")
+        
         # 1. Process slash commands
         command_response = await self.command_processor.process(user_text)
         if command_response:
+             if bubble: 
+                 bubble.remove() # Don't keep command bubble usually?
+             
              if command_response == "Exiting...":
                  return
              elif "Session history cleared." in command_response:
@@ -340,6 +445,7 @@ class PlexirApp(App):
                  input_widget.focus()
                  return
 
+             # For other commands, we show the command and response
              self._add_message("user", user_text)
              self._add_message("system", command_response)
              input_widget.focus()
@@ -347,7 +453,8 @@ class PlexirApp(App):
 
         # 2. Add to history and update UI
         self.history.append({"role": "user", "content": user_text})
-        self._add_message("user", user_text)
+        if not bubble:
+            self._add_message("user", user_text)
 
         # 3. Trigger AI response and WAIT for it to finish
         try:
@@ -392,23 +499,30 @@ class PlexirApp(App):
         """Executes a list of commands sequentially."""
         self.notify("Playing macro...")
         for cmd in commands:
-            self.message_queue.put_nowait(cmd)
-            # We don't need to sleep here because the queue processes sequentially
-            # But we might want a small delay to avoid UI flicker if they are all instant
-            await asyncio.sleep(0.1)
+            # Mount bubbles for macro commands so they show as queued
+            bubble = MessageBubble(role="user", content=cmd)
+            bubble.add_class("queued")
+            self.query_one("#chat-scroll", VerticalScroll).mount(bubble)
+            
+            self.queued_bubbles.append((cmd, bubble))
+            await self._add_to_queue(cmd)
+            
+            # small delay to avoid UI hammer
+            await asyncio.sleep(0.05)
+        
+        self.query_one("#chat-scroll", VerticalScroll).scroll_end(animate=True)
         self.notify("Macro playback queued.")
 
     # --- UI Helpers ---
 
-    def _add_message(self, role: str, content: str) -> MessageContent:
-        """Mounts a new message bubble in the chat scroll area."""
+    def _add_message(self, role: str, content: str) -> MessageBubble:
+        """Adds a message to the chat scroll."""
         chat_scroll = self.query_one("#chat-scroll", VerticalScroll)
-        bubble = MessageBubble(role=role)
+        bubble = MessageBubble(role=role, content=content)
         chat_scroll.mount(bubble)
-        content_widget = bubble.query_one(MessageContent)
-        content_widget.update(content)
+        
         chat_scroll.scroll_end(animate=True)
-        return content_widget
+        return bubble
 
     def _load_history_to_chat(self, history: List[Dict[str, Any]]):
         """Reconstructs the chat UI from a history list."""
@@ -417,28 +531,59 @@ class PlexirApp(App):
             child.remove()
         
         chat_scroll.mount(Static("Session history loaded.", classes="welcome-msg"))
+        verbosity = config_manager.config.verbosity
 
         for msg in history:
             role = msg.get("role")
             content = msg.get("content", "")
             
-            # Format tool parts for display
+            # 1. Handle tool parts
             if "parts" in msg:
+                # We want to display tool calls as ToolOutput widgets
+                # and tool responses as results.
+                model_bubble = MessageBubble(role="model", content="")
+                chat_scroll.mount(model_bubble)
+
                 for part in msg["parts"]:
                     if "function_call" in part:
                         fc = part["function_call"]
-                        content = f"> 🛠️ **Executing:** `{fc['name']}` with args: `{fc['args']}`"
-                        role = "model"
+                        model_bubble.mount(ToolOutput(fc['name'], str(fc['args']), "(Reloaded)"))
                     elif "function_response" in part:
                         fr = part["function_response"]
-                        result_display = str(fr["response"].get("result", "(no result)"))
-                        if len(result_display) > 500:
-                            result_display = result_display[:500] + "\n... (truncated)"
-                        content = f"```text\n{result_display}\n```\n"
-                        role = "model"
-            
+                        res_obj = fr.get("response", {})
+                        result_display = str(res_obj.get("result", "(no result)"))
+                        
+                        if verbosity == 0 and len(result_display) > 1000:
+                            result_display = result_display[:1000] + "\n... (truncated)"
+                        
+                        model_bubble.mount(MessageContent(f"```text\n{result_display}\n```"))
+                continue
+
+            # 2. Handle thinking tags in content
+            if content and "<think>" in content:
+                bubble = MessageBubble(role=role, content="")
+                chat_scroll.mount(bubble)
+                
+                parts = content.split("<think>")
+                # pre-think
+                if parts[0].strip():
+                    bubble.mount(MessageContent(parts[0]))
+                
+                for p in parts[1:]:
+                    if "</think>" in p:
+                        thought, rest = p.split("</think>", 1)
+                        is_collapsed = not config_manager.config.expanded_reasoning
+                        bubble.mount(Collapsible(MessageContent(thought), title="Reasoning Process", collapsed=is_collapsed))
+                        if rest.strip():
+                            bubble.mount(MessageContent(rest))
+                    else:
+                        bubble.mount(MessageContent(f"<think>{p}"))
+                continue
+
             if content:
                 self._add_message(role, content)
+        
+        chat_scroll.scroll_end(animate=False)
 
     # --- AI Orchestration ---
 
@@ -450,10 +595,12 @@ class PlexirApp(App):
         chat_scroll = self.query_one("#chat-scroll", VerticalScroll)
         
         # Start a new bubble for this generation session
-        model_bubble = MessageBubble(role="model")
+        model_bubble = MessageBubble(role="model", content="")
         await chat_scroll.mount(model_bubble)
         
-        current_text_widget = model_bubble.query_one(MessageContent)
+        # Give a tiny bit of time for compose
+        await asyncio.sleep(0.01)
+        current_text_widget = model_bubble.query_one("#message-text", MessageContent)
         current_text_buffer = ""
         
         # Optimization: Dynamic Throttling
@@ -522,8 +669,16 @@ class PlexirApp(App):
 
                         elif chunk.type == RouterEvent.USAGE:
                             data = chunk.data
-                            stats.tokens = self.router.session_usage["total_tokens"]
+                            stats.ctx_tokens = data.get("last_context_tokens", 0)
+                            stats.total_tokens = self.router.session_usage["total_tokens"]
                             stats.cost = self.router.session_usage["total_cost"]
+                        
+                        elif chunk.type == "system":
+                            # Handle system messages from router (like pruning notice)
+                            self.notify(chunk.data)
+                            notice = Static(f"ℹ️ {chunk.data}", classes="system-notice")
+                            await chat_scroll.mount(notice)
+                            chat_scroll.scroll_end(animate=True)
                         continue
                     
                     if isinstance(chunk, dict) and chunk.get("type") == "tool_call":
@@ -615,9 +770,11 @@ class PlexirApp(App):
                                     
                                     # Render reasoning
                                     if reasoning_content.strip():
+                                        is_collapsed = not config_manager.config.expanded_reasoning
                                         reasoning_widget = Collapsible(
                                             MessageContent(reasoning_content), 
-                                            title="Reasoning Process"
+                                            title="Reasoning Process",
+                                            collapsed=is_collapsed
                                         )
                                         await model_bubble.mount(reasoning_widget)
                                         

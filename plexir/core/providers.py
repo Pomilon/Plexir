@@ -42,6 +42,11 @@ class LLMProvider(ABC):
         """Generates a response from the LLM."""
         pass
 
+    @abstractmethod
+    async def count_tokens(self, history: List[Dict[str, Any]], system_instruction: str = "") -> int:
+        """Counts the number of tokens for the given input."""
+        pass
+
     async def execute_tool(self, tool_name: str, args: Dict[str, Any]) -> Any:
         """Executes a tool by name with the given arguments."""
         tool = self.tools.get(tool_name)
@@ -139,6 +144,45 @@ class GeminiProvider(LLMProvider):
             return None
         except Exception:
             return None
+
+    async def count_tokens(self, history: List[Dict[str, Any]], system_instruction: str = "") -> int:
+        """Counts tokens for the given input using Gemini's native API."""
+        if not self.client: return 0
+        
+        # Mapping to Gemini Content objects
+        contents = []
+        for msg in history:
+            role = msg.get("role", "user")
+            parts = []
+            if "content" in msg and msg["content"]:
+                parts.append(types.Part(text=msg["content"]))
+            if "parts" in msg:
+                for p in msg["parts"]:
+                    if "text" in p: parts.append(types.Part(text=p["text"]))
+                    elif "function_call" in p:
+                         fc = p["function_call"]
+                         parts.append(types.Part(function_call=types.FunctionCall(name=fc["name"], args=fc["args"])))
+                    elif "function_response" in p:
+                         fr = p["function_response"]
+                         parts.append(types.Part(function_response=types.FunctionResponse(name=fr["name"], response=fr["response"])))
+            if parts:
+                contents.append(types.Content(role=role, parts=parts))
+
+        try:
+            if isinstance(self.client, GeminiOAuthClient):
+                config = types.GenerateContentConfig(system_instruction=system_instruction) if system_instruction else None
+                return await self.client.count_tokens(self.model_name, contents, config)
+            else:
+                resp = await self.client.aio.models.count_tokens(
+                    model=self.model_name,
+                    contents=contents,
+                    config=types.GenerateContentConfig(system_instruction=system_instruction) if system_instruction else None
+                )
+                return resp.total_tokens
+        except Exception as e:
+            logger.warning(f"Native token counting failed: {e}. Falling back to heuristic.")
+            from plexir.core.context import estimate_token_count
+            return estimate_token_count(history) + estimate_token_count(system_instruction)
 
     async def generate(
         self, 
@@ -276,12 +320,18 @@ class OpenAICompatibleProvider(LLMProvider):
             base_url=base_url or "https://api.openai.com/v1"
         )
 
+    async def count_tokens(self, history: List[Dict[str, Any]], system_instruction: str = "") -> int:
+        """Counts tokens for the given input using heuristic."""
+        from plexir.core.context import estimate_token_count
+        return estimate_token_count(history) + estimate_token_count(system_instruction)
+
     async def generate(
         self, 
         history: List[Dict[str, Any]], 
         system_instruction: str = ""
     ) -> AsyncGenerator[Union[str, Dict[str, Any]], None]:
         if not self.config.get_api_key() and self.config.type != "ollama":
+
             raise ValueError(f"API Key for {self.name} is missing.")
 
         # Enforce Context Limit
@@ -387,6 +437,11 @@ class OpenAICompatibleProvider(LLMProvider):
                 delta = getattr(choice, 'delta', None)
                 if not delta: continue
                 
+                # Handle DeepSeek-style reasoning_content
+                reasoning = getattr(delta, 'reasoning_content', None)
+                if reasoning:
+                    yield f"<think>{reasoning}</think>"
+
                 if getattr(delta, 'content', None):
                     yield delta.content
                 

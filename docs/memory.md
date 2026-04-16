@@ -20,9 +20,18 @@ You can prompt the agent to remember things directly:
 Or ask it to recall:
 > "Where did I say my keys were?"
 
-## Rolling Summarization
+## Session-Scoped Scratchpad (New in v1.9)
 
-When a conversation history becomes too large (exceeding 40 messages), Plexir automatically triggers **Rolling Summarization**. 
+For tasks that require multi-step planning and temporary note-taking, Plexir provides a `scratchpad` tool. 
+
+Unlike the global Memory Bank, the scratchpad is **session-scoped**. This means:
+- **Isolation**: Each session (started with a new run or loaded via `/session load`) has its own unique scratchpad file.
+- **Plan Continuity**: Plans made in the scratchpad are saved alongside your session. If you load a session tomorrow, the agent will see exactly where it left off in its plan.
+- **No Global Noise**: Content in one session's scratchpad won't confuse the agent in a different project or session.
+
+The agent uses the `scratchpad` tool automatically for complex tasks, but you can also view it manually in `~/.plexir/sessions/<session_id>_scratchpad.md`.
+
+## Rolling Summarization & Proactive Pruning
 
 1. **How it works**: Plexir identifies older, unpinned messages and uses the primary LLM to condense them into a concise "BACKGROUND SUMMARY."
 2. **Context Preservation**: This summary is injected at the start of the conversation, allowing the model to remember high-level decisions and context while clearing out detailed token-heavy noise.

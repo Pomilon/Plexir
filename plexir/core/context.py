@@ -12,49 +12,36 @@ KEEP_LAST_MESSAGES = 4
 def estimate_token_count(content: Any) -> int:
     """
     Estimates the number of tokens in a message or list of messages.
-    Uses a rough heuristic of 4 characters per token.
+    Uses a standard heuristic of approx 1.3 tokens per word (more accurate than chars/4).
     """
     if isinstance(content, str):
-        return len(content) // 4
+        # 1.3 tokens per word is a common industry standard for English
+        return int(len(content.split()) * 1.3) + 2 # +2 for potential special tokens
     
     if isinstance(content, list):
         total = 0
         for item in content:
-            if isinstance(item, dict):
-                # Check for standard 'content'
-                if "content" in item:
-                    total += estimate_token_count(item["content"])
-                
-                # Check for 'parts' (Gemini style)
-                if "parts" in item:
-                    for part in item["parts"]:
-                        if isinstance(part, dict):
-                            if "text" in part:
-                                total += estimate_token_count(part["text"])
-                            elif "thought" in part:
-                                total += estimate_token_count(part["thought"])
-                            elif "function_call" in part:
-                                fc = part["function_call"]
-                                total += estimate_token_count(str(fc))
-                            elif "function_response" in part:
-                                fr = part["function_response"]
-                                total += estimate_token_count(str(fr))
-                        elif isinstance(part, str):
-                            total += estimate_token_count(part)
-            elif isinstance(item, str):
-                total += estimate_token_count(item)
+            total += estimate_token_count(item)
         return total
 
     if isinstance(content, dict):
-         # Single message dict
         total = 0
         if "content" in content:
             total += estimate_token_count(content["content"])
         if "parts" in content:
-            total += estimate_token_count(content["parts"])
-        return total
+            # Recursively count parts
+            for part in content["parts"]:
+                if isinstance(part, dict):
+                    if "text" in part: total += estimate_token_count(part["text"])
+                    elif "thought" in part: total += estimate_token_count(part["thought"])
+                    # Rough estimate for tool calls/responses as strings
+                    elif "function_call" in part: total += estimate_token_count(str(part["function_call"]))
+                    elif "function_response" in part: total += estimate_token_count(str(part["function_response"]))
+                else:
+                    total += estimate_token_count(str(part))
+        return total + 4 # Overhead for message structure
 
-    return len(str(content)) // 4
+    return int(len(str(content)).split() * 1.3)
 
 def distill(history: List[Dict[str, Any]], max_chars: int = DEFAULT_MAX_DISTILLED_CHARS) -> str:
     """
@@ -141,7 +128,8 @@ def get_messages_to_summarize(history: List[Dict[str, Any]], count: int) -> tupl
 def enforce_context_limit(
     history: List[Dict[str, Any]], 
     limit: int, 
-    system_instruction: str = ""
+    system_instruction: str = "",
+    current_tokens: Optional[int] = None
 ) -> List[Dict[str, Any]]:
     """
     Enforces the token limit by pruning the history.
@@ -149,7 +137,8 @@ def enforce_context_limit(
     if not limit or limit <= 0:
         return history
 
-    current_tokens = estimate_token_count(history) + estimate_token_count(system_instruction)
+    if current_tokens is None:
+        current_tokens = estimate_token_count(history) + estimate_token_count(system_instruction)
     
     if current_tokens <= limit:
         return history

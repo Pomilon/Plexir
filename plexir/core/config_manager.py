@@ -91,6 +91,8 @@ class AppConfig(BaseModel):
     mcp_servers: Dict[str, MCPServerConfig] = Field(default_factory=dict, description="Configured MCP servers.")
     theme: str = "tokyo-night"
     debug_mode: bool = False
+    verbosity: int = 0
+    expanded_reasoning: bool = False
     session_budget: float = 0.0 # 0.0 means no limit
     pricing: Dict[str, tuple[float, float]] = Field(
         default_factory=lambda: {

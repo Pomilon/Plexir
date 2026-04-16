@@ -111,7 +111,25 @@ We have successfully implemented the core foundation and advanced agentic capabi
 
 ---
 
-## 🔮 Long Term Vision (v2.0)
+## ✅ Completed Milestones (v1.9)
+
+### 🧠 Intelligence & Context
+- [x] **Native Token Counting**: Integrated Gemini native token counting API for 100% accurate measurement.
+- [x] **Proactive Context Management**: Automatic pruning/summarization when context reaches 90% capacity.
+- [x] **Deep Reasoning Support**: Native support for `reasoning_content` (DeepSeek/OpenRouter) and tag normalization.
+- [x] **Configurable Reasoning**: Standalone `/config reasoning <on|off>` to control UI transparency of thinking blocks.
+- [x] **Session-Scoped Scratchpad**: Isolated planning space that persists within a session but doesn't pollute global history.
+
+### 🖥️ UI & Interaction
+- [x] **Interactive Message Queue**: Real-time visualization of pending messages with "queued" styling.
+- [x] **Queue "Unroll" Logic**: Interactive click-to-edit behavior that pulls queued messages back into the main input.
+- [x] **Dynamic Verbosity**: Level-based control over tool output detail via `/config verbosity`.
+
+### 🛡️ Stability & Core
+- [x] **Modal Result Pattern**: Standardized `push_screen_wait` for robust human-in-the-loop flows.
+- [x] **Race-Condition Hardening**: Improved widget composition to handle rapid LLM streaming and UI updates.
+
+---
 
 ### 1. True "IDE-Like" UI
 - [ ] **Multi-Tab Interface**: Support multiple open chat buffers or file editors simultaneously.

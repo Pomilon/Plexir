@@ -10,7 +10,7 @@ import os
 import subprocess
 import base64
 import shlex
-from typing import List, Any
+from typing import List, Any, Optional, Dict
 from pydantic import BaseModel, Field
 from plexir.tools.base import Tool
 from plexir.core.rag import CodebaseRetriever
@@ -198,7 +198,9 @@ class GrepTool(Tool):
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
         if result.returncode == 1:
             return "No matches found."
-        return result.stdout[:5000]
+        
+        limit = 5000 if config_manager.config.verbosity == 0 else 50000
+        return result.stdout[:limit]
 
 class WebSearchTool(Tool):
     """Performs a web search using Tavily (primary) or DuckDuckGo (fallback)."""
@@ -362,8 +364,9 @@ class BrowseURLTool(Tool):
             if not clean_text:
                 return "No readable text content found."
             
-            # Truncate to avoid context overflow (limit to ~4000 tokens / 12000 chars)
-            return clean_text[:12000]
+            # Truncate to avoid context overflow
+            limit = 12000 if config_manager.config.verbosity == 0 else 50000
+            return clean_text[:limit]
         except Exception as e:
             return f"Extraction failed: {e}"
 
@@ -647,8 +650,12 @@ class ScratchpadTool(Tool):
     description = "Use this to store plans, notes, or findings that you need to remember for later steps."
     args_schema = ScratchpadSchema
 
-    def __init__(self):
-        self.file_path = os.path.expanduser("~/.plexir/scratchpad.md")
+    def __init__(self, session_id: Optional[str] = None):
+        if session_id:
+            # Save to a session-specific file
+            self.file_path = os.path.expanduser(f"~/.plexir/sessions/{session_id}_scratchpad.md")
+        else:
+            self.file_path = os.path.expanduser("~/.plexir/scratchpad.md")
     
     async def run(self, action: str, content: str = None) -> str:
         # Note: Scratchpad is always on the host, even if sandboxed, 

@@ -77,17 +77,25 @@ class Router:
     """
     MAX_HISTORY_MESSAGES = 40
 
-    def __init__(self, sandbox_enabled: bool = False, mount_cwd: bool = False):
+    def __init__(self, sandbox_enabled: bool = False, mount_cwd: bool = False, session_id: Optional[str] = None):
         self.registry = ToolRegistry()
         self.mcp_clients: List[MCPClient] = []
         self.sandbox_enabled = sandbox_enabled
         self.mount_cwd = mount_cwd
+        self.session_id = session_id
         self.sandbox = PersistentSandbox(mount_cwd=mount_cwd) if sandbox_enabled else None
         self.container_started = False
         self.load_base_tools()
         self.providers = []
         self.active_provider_index = 0
-        self.session_usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0, "total_cost": 0.0}
+        self.session_usage = {
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "total_tokens": 0,
+            "total_cost": 0.0,
+            "last_context_tokens": 0
+        }
+
 
     def _calculate_cost(self, model: str, prompt_tokens: int, completion_tokens: int) -> float:
         """Estimates cost based on model and token counts."""
@@ -104,7 +112,8 @@ class Router:
             GitDiffTool(), GitAddTool(), GitCommitTool(), GitCheckoutTool(), GitBranchTool(),
             GitPushTool(), GitPullTool(),
             GitHubCreateIssueTool(), GitHubCreatePRTool(),
-            WebSearchTool(), BrowseURLTool(), CodebaseSearchTool(), GetDefinitionsTool(), GetRepoMapTool(), ScratchpadTool(),
+            WebSearchTool(), BrowseURLTool(), CodebaseSearchTool(), GetDefinitionsTool(), GetRepoMapTool(), 
+            ScratchpadTool(session_id=self.session_id),
             ExportSandboxTool(), DelegateToAgentTool(), SaveMemoryTool(), SearchMemoryTool()
         ]
         for tool in tools:
@@ -231,6 +240,20 @@ Available Tools:
             
             # Reset prompt for this provider attempt
             turn_prompt = current_system_prompt_base
+
+            # 2. Precise context enforcement using provider's token counter
+            try:
+                tokens = await provider.count_tokens(history, turn_prompt)
+                limit = provider.config.context_limit
+                if limit is None:
+                    limit = config_manager.config.model_context_windows.get(provider.model_name)
+                
+                if limit and tokens > (limit * 0.9):
+                    yield RouterEvent("system", data=f"Context window for {provider.name} almost full ({tokens}/{limit}). Pruning...")
+                    history = context.enforce_context_limit(history, limit, turn_prompt, current_tokens=tokens)
+            except Exception as e:
+                logger.warning(f"Token counting failed for {provider.name}: {e}")
+
             if i > 0:
                 yield RouterEvent(RouterEvent.FAILOVER, data=provider.name)
                 distilled = context.distill(history)
@@ -241,27 +264,38 @@ Available Tools:
             for attempt in range(max_retries + 1):
                 try:
                     first_chunk = True
+                    turn_usage_captured = False
+                    
                     async for chunk in provider.generate(history, turn_prompt):
                         if first_chunk:
                             self.active_provider_index = actual_index
                             first_chunk = False
                         
                         if isinstance(chunk, dict) and chunk.get("type") == "usage":
+                            # Only add to session totals once per turn to avoid double counting
+                            # most providers send cumulative usage in the last chunk or in every chunk.
                             p_tokens = chunk.get("prompt_tokens", 0)
                             c_tokens = chunk.get("completion_tokens", 0)
                             t_tokens = chunk.get("total_tokens", 0)
                             
-                            self.session_usage["prompt_tokens"] += p_tokens
-                            self.session_usage["completion_tokens"] += c_tokens
-                            self.session_usage["total_tokens"] += t_tokens
+                            # Track current context size
+                            self.session_usage["last_context_tokens"] = p_tokens + c_tokens
                             
-                            cost = self._calculate_cost(provider.model_name, p_tokens, c_tokens)
-                            self.session_usage["total_cost"] += cost
+                            if not turn_usage_captured:
+                                self.session_usage["prompt_tokens"] += p_tokens
+                                self.session_usage["completion_tokens"] += c_tokens
+                                self.session_usage["total_tokens"] += t_tokens
+                                
+                                cost = self._calculate_cost(provider.model_name, p_tokens, c_tokens)
+                                self.session_usage["total_cost"] += cost
+                                turn_usage_captured = True
                             
+                            # Always update Accumulated Cost in chunk for UI
                             chunk["total_cost_accumulated"] = self.session_usage["total_cost"]
+                            chunk["last_context_tokens"] = self.session_usage["last_context_tokens"]
                             yield RouterEvent(RouterEvent.USAGE, data=chunk)
                             continue
-                            
+                        
                         yield chunk
                     return # Success! 
 

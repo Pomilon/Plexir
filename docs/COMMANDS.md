@@ -43,6 +43,17 @@ Sets a maximum dollar amount for the current session to prevent runaway costs.
 - **Example**: `/config budget 0.50`
 - **Example**: `/config budget 0` (disables limit)
 
+#### `/config verbosity <0|1|2>`
+Sets the application verbosity level for tool outputs.
+- **`0`**: Normal (truncated tool outputs, concise logs).
+- **`1`**: Verbose (full tool outputs, more detailed logs).
+- **`2`**: Debug (maximum detail for troubleshooting).
+- **Example**: `/config verbosity 1`
+
+#### `/config reasoning <on|off>`
+Toggles whether "Thinking" blocks (reasoning process) are expanded or collapsed by default in the chat.
+- **Example**: `/config reasoning off`
+
 #### `/config tool <domain> <key> <value>`
 Sets a configuration value for a specific tool suite. This is how you provide tokens for external services.
 - **`<domain>`**: The tool domain (e.g., `git`, `github`).
@@ -80,11 +91,13 @@ Saves and loads chat histories.
 Lists all saved session files.
 
 #### `/session save [name]`
-Saves the current conversation history to a file. If `[name]` is omitted, a timestamp is used.
+Saves the current conversation history to a file. If `[name]` is omitted, a timestamp is used. 
+*Note: This also saves the current `scratchpad` state associated with this session name.*
 - **Example**: `/session save my-feature-dev`
 
 #### `/session load <name>`
-Clears the current chat and loads a saved session.
+Clears the current chat and loads a saved session. 
+*Note: This also loads the `scratchpad` associated with the session name, ensuring planning continuity.*
 - **Example**: `/session load my-feature-dev`
 
 #### `/session delete <name>`
