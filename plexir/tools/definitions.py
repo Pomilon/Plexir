@@ -10,6 +10,8 @@ import os
 import subprocess
 import base64
 import shlex
+import requests
+from bs4 import BeautifulSoup
 from typing import List, Any, Optional, Dict
 from pydantic import BaseModel, Field
 from plexir.tools.base import Tool
@@ -17,6 +19,7 @@ from plexir.core.rag import CodebaseRetriever
 from plexir.core.config_manager import config_manager
 from plexir.core.github import GitHubClient
 from plexir.core.memory import MemoryBank
+from plexir.core.policy import policy_manager, Decision
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +42,7 @@ class GrepSchema(BaseModel):
     pattern: str = Field(..., description="Regex pattern to search for.")
     path: str = Field(".", description="Path to search in (file or directory).")
     recursive: bool = Field(True, description="Whether to search recursively.")
+    context: int = Field(0, description="Number of context lines to show (grep -C).")
 
 class EditFileSchema(BaseModel):
     file_path: str = Field(..., description="Path to the file to edit.")
@@ -162,9 +166,33 @@ class RunShellTool(Tool):
     args_schema = RunShellSchema
     is_critical = True
 
-    async def run(self, command: str) -> str:
+    async def run(self, command: str, stream: bool = False) -> str:
+        # 1. Security Check via Policy Manager
+        decision, justification, segment = policy_manager.decompose_and_evaluate(command)
+        
+        if decision == Decision.FORBIDDEN:
+            return f"Error: Command segment '{segment}' is FORBIDDEN by policy. Reason: {justification or 'No reason provided.'}"
+        
+        # 2. Execution
         if self.sandbox:
-            return await self.sandbox.exec(command)
+            if stream:
+                full_output = []
+                async for chunk in self.sandbox.stream_exec(command):
+                    full_output.append(chunk)
+                output = "".join(full_output)
+            else:
+                output = await self.sandbox.exec(command)
+            
+            # Capture state delta after execution
+            delta = await self.sandbox.get_state_delta()
+            if delta and (delta.get("changed_files") or delta.get("top_processes")):
+                delta_msg = "\n\n[SANDBOX STATE DELTA]"
+                if delta.get("changed_files"):
+                    delta_msg += f"\nChanged Files: {', '.join(delta['changed_files'])}"
+                if delta.get("top_processes"):
+                    delta_msg += f"\nTop Processes:\n{delta['top_processes']}"
+                output += delta_msg
+            return output
         try:
             return await asyncio.to_thread(self._sync_run_shell, command)
         except Exception as e:
@@ -183,12 +211,20 @@ class GrepTool(Tool):
     description = "Searches for a text pattern in files using grep."
     args_schema = GrepSchema
 
-    async def run(self, pattern: str, path: str = ".", recursive: bool = True) -> str:
+    async def run(self, pattern: str, path: str = ".", recursive: bool = True, context: int = 0) -> str:
         if self.sandbox:
             flags = "-rn" if recursive else "-n"
+            if context > 0: flags += f"C {context}"
             return await self.sandbox.exec(f"grep {flags} '{pattern}' '{path}'")
         
-        cmd = ["grep", "-rn" if recursive else "-n", pattern, path]
+        cmd = ["grep"]
+        if recursive: cmd.append("-rn")
+        else: cmd.append("-n")
+        
+        if context > 0:
+            cmd.extend(["-C", str(context)])
+        
+        cmd.extend([pattern, path])
         try:
             return await asyncio.to_thread(self._sync_grep, cmd)
         except Exception as e:
@@ -222,7 +258,6 @@ class WebSearchTool(Tool):
         return await self._search_ddg_fallback(query)
 
     async def _search_tavily(self, query: str, api_key: str) -> str:
-        import requests
         url = "https://api.tavily.com/search"
         data = {
             "api_key": api_key,
@@ -251,7 +286,6 @@ class WebSearchTool(Tool):
             return await self._search_ddg_fallback(query)
 
     async def _search_serper(self, query: str, api_key: str) -> str:
-        import requests
         url = "https://google.serper.dev/search"
         headers = {
             'X-API-KEY': api_key,
@@ -282,9 +316,6 @@ class WebSearchTool(Tool):
         # If in sandbox, we could curl, but for structured results it's better to scrape on host
         # even if sandboxed, as web search is global.
         try:
-            import requests
-            from bs4 import BeautifulSoup
-            
             def sync_search():
                 search_url = f"https://duckduckgo.com/html/?q={query}"
                 headers = {
@@ -330,7 +361,6 @@ class BrowseURLTool(Tool):
             return self._extract_text(html)
 
         try:
-            import requests
             def sync_fetch():
                 headers = {
                     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
@@ -347,7 +377,6 @@ class BrowseURLTool(Tool):
     def _extract_text(self, html: str) -> str:
         """Helper to extract clean text from HTML using BeautifulSoup."""
         try:
-            from bs4 import BeautifulSoup
             soup = BeautifulSoup(html, "html.parser")
             
             # Remove scripts, styles, and nav elements
@@ -636,7 +665,7 @@ if __name__ == "__main__":
             return await self.sandbox.exec(cmd)
 
         try:
-            return await asyncio.to_thread(CodebaseRetriever.generate_repo_map, root_dir, max_depth)
+            return await asyncio.to_thread(CodebaseRetriever.get_cached_repo_map, root_dir, max_depth)
         except Exception as e:
             return f"Error generating repo map: {e}"
 
@@ -813,7 +842,7 @@ class ExportSandboxTool(Tool):
             return f"Export failed: {e}"
 
 class DelegateToAgentSchema(BaseModel):
-    agent_name: str = Field(..., description="A descriptive name for the sub-agent (e.g., 'codebase_investigator').")
+    agent_name: str = Field(..., description="The name of the specialized sub-agent. Available: 'codebase_investigator', 'coder', 'tester', 'researcher', 'reviewer'.")
     objective: str = Field(..., description="The comprehensive and detailed goal for the sub-agent.")
 
 class DelegateToAgentTool(Tool):
@@ -822,12 +851,17 @@ class DelegateToAgentTool(Tool):
     description = "Delegates a complex sub-task to a specialized sub-agent. The sub-agent will work on the objective and return a structured report."
     args_schema = DelegateToAgentSchema
 
-    async def run(self, agent_name: str, objective: str) -> str:
-        # In this version, we simulate the delegation by logging it and returning a prompt for the user
-        # In a future version, this could spawn a separate Router instance.
-        logger.info(f"Delegating task to agent '{agent_name}': {objective}")
-        return f"TASK DELEGATED TO {agent_name.upper()}\nObjective: {objective}\n\nPlease proceed with this sub-task and report back when finished."
+    def __init__(self, router: Any = None, on_event: Optional[callable] = None):
+        self.router = router
+        self.on_event = on_event
 
+    async def run(self, agent_name: str, objective: str) -> str:
+        if not self.router:
+            return "Error: No router associated with this tool. Delegation failed."
+
+        # Real delegation logic with streaming support
+        report = await self.router.run_subagent(agent_name, objective, on_event=self.on_event)
+        return report
 class SaveMemorySchema(BaseModel):
     content: str = Field(..., description="The fact or information to remember.")
     category: str = Field("general", description="Optional category (e.g., 'preference', 'fact', 'code_pattern').")

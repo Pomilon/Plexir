@@ -75,7 +75,7 @@ class MCPClient:
                         "prompts": {},
                         "logging": {}
                     },
-                    "clientInfo": {"name": "Plexir", "version": "1.6.0"}
+                    "clientInfo": {"name": "Plexir", "version": "1.10.0"}
                 })
                 logger.info(f"MCP {self.name} Initialized. Server: {init_result.get('serverInfo', 'Unknown')}")
                 

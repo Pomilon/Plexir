@@ -15,8 +15,13 @@ async def test_token_tracking_and_cost():
     router = Router()
     # Mock a provider that yields usage data
     class MockUsageProvider:
-        name = "MockUsage"
-        model_name = "mock-model" 
+        def __init__(self):
+            self.name = "MockUsage"
+            self.model_name = "mock-model"
+            self.config = MagicMock()
+            self.config.context_limit = 10000
+        async def count_tokens(self, h, s):
+            return 10
         async def generate(self, h, s):
             yield {
                 "type": "usage",
@@ -78,7 +83,7 @@ async def test_rolling_summarization_trigger():
     history = [{"role": "user", "content": f"msg {i}"} for i in range(10)]
     
     # Mock summarize_session to be an async function
-    async def mock_summarize(h):
+    async def mock_summarize(h, target_tokens=None):
         return None
 
     with patch.object(router, 'summarize_session', wraps=mock_summarize) as mock_sum:
@@ -86,6 +91,11 @@ async def test_rolling_summarization_trigger():
         class MockProvider:
             name = "Test"
             model_name = "test"
+            def __init__(self):
+                self.config = MagicMock()
+                self.config.context_limit = 10000
+            async def count_tokens(self, h, s):
+                return 10
             async def generate(self, h, s):
                 yield "chunk"
 

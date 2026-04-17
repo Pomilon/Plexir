@@ -47,6 +47,11 @@ class LLMProvider(ABC):
         """Counts the number of tokens for the given input."""
         pass
 
+    @abstractmethod
+    async def get_available_models(self) -> List[str]:
+        """Returns a list of available model names for this provider."""
+        pass
+
     async def execute_tool(self, tool_name: str, args: Dict[str, Any]) -> Any:
         """Executes a tool by name with the given arguments."""
         tool = self.tools.get(tool_name)
@@ -170,19 +175,34 @@ class GeminiProvider(LLMProvider):
 
         try:
             if isinstance(self.client, GeminiOAuthClient):
-                config = types.GenerateContentConfig(system_instruction=system_instruction) if system_instruction else None
-                return await self.client.count_tokens(self.model_name, contents, config)
+                # REST client handles config dict
+                tokens = await self.client.count_tokens(self.model_name, contents, system_instruction)
+                return tokens or 0
             else:
+                # SDK 1.0+ handles this via model.count_tokens
+                # We simplify the call as certain models don't support system_instruction in count_tokens
                 resp = await self.client.aio.models.count_tokens(
                     model=self.model_name,
-                    contents=contents,
-                    config=types.GenerateContentConfig(system_instruction=system_instruction) if system_instruction else None
+                    contents=contents
                 )
-                return resp.total_tokens
+                return resp.total_tokens or 0
         except Exception as e:
             logger.warning(f"Native token counting failed: {e}. Falling back to heuristic.")
             from plexir.core.context import estimate_token_count
             return estimate_token_count(history) + estimate_token_count(system_instruction)
+
+    async def get_available_models(self) -> List[str]:
+        """Lists available models for Gemini."""
+        if not self.client: return []
+        try:
+            if isinstance(self.client, GeminiOAuthClient):
+                return await self.client.list_models()
+            else:
+                models_resp = await self.client.aio.models.list()
+                return [m.name.replace("models/", "") for m in models_resp]
+        except Exception as e:
+            logger.warning(f"Failed to list Gemini models: {e}")
+            return [self.model_name]
 
     async def generate(
         self, 
@@ -221,7 +241,10 @@ class GeminiProvider(LLMProvider):
         
         contents = []
         for msg in history:
-            role = msg.get("role", "user")
+            raw_role = msg.get("role", "user")
+            # Gemini only supports 'user' and 'model' roles in contents list.
+            # We map 'system' to 'user' for history-based instructions/summaries.
+            role = "model" if raw_role == "model" else "user"
             parts = []
             
             raw_content = msg.get("content", "")
@@ -281,10 +304,12 @@ class GeminiProvider(LLMProvider):
                 if not candidate.content or not candidate.content.parts: continue
                 
                 for part in candidate.content.parts:
-                    # Handle Thinking/Reasoning
+                    # Handle Thinking/Reasoning (Native Gemini 2.0+ support)
                     if getattr(part, 'thought', None):
-                        # Wrap in <think> tags for Plexir UI
-                        yield f"<think>{part.text}</think>"
+                        yield {
+                            "type": "thought",
+                            "content": part.text
+                        }
                     
                     if part.text and not getattr(part, 'thought', None):
                         yield part.text
@@ -324,6 +349,18 @@ class OpenAICompatibleProvider(LLMProvider):
         """Counts tokens for the given input using heuristic."""
         from plexir.core.context import estimate_token_count
         return estimate_token_count(history) + estimate_token_count(system_instruction)
+
+    async def get_available_models(self) -> List[str]:
+        """Lists available models for OpenAI-compatible providers."""
+        if not self.client: return []
+        try:
+            resp = await self.client.models.list()
+            # Sort for better UX
+            models = sorted([m.id for m in resp.data])
+            return models
+        except Exception as e:
+            logger.warning(f"Failed to list models for {self.name}: {e}")
+            return [self.model_name]
 
     async def generate(
         self, 

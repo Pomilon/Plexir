@@ -4,7 +4,7 @@ import shutil
 import tempfile
 import os
 import asyncio
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch, MagicMock, AsyncMock
 
 from plexir.core.config_manager import ProviderConfig
 from plexir.core.providers import OpenAICompatibleProvider
@@ -59,14 +59,17 @@ async def test_delegate_to_agent_tool():
     print("\n--- Testing DelegateToAgent Tool ---")
     
     tool = DelegateToAgentTool()
+    mock_router = MagicMock()
+    mock_router.run_subagent = AsyncMock(return_value="--- REPORT FROM RESEARCHER ---\nFound papers.")
+    tool.router = mock_router
+    
     agent_name = "researcher"
     objective = "Find the latest papers on transformers."
     
     result = await tool.run(agent_name=agent_name, objective=objective)
     
     print(f"Result: {result}")
-    assert "TASK DELEGATED TO RESEARCHER" in result
-    assert objective in result
+    assert "REPORT FROM RESEARCHER" in result
 
 def test_memory_bank_integration():
     """Test MemoryBank persistence and search using a temp directory."""

@@ -67,6 +67,12 @@ class Tool(ABC):
             
             schema["parameters"]["properties"][prop] = prop_schema
             
+        # Auto-inject wait_for_previous into all tools
+        schema["parameters"]["properties"]["wait_for_previous"] = {
+            "type": "BOOLEAN",
+            "description": "If True, this tool call will wait for all preceding tool calls in this turn to complete before starting. Use this to ensure sequential execution when subsequent calls depend on the results of previous ones."
+        }
+        
         schema["parameters"]["required"] = required
         return schema
 
@@ -77,6 +83,13 @@ class Tool(ABC):
             parameters = self.args_schema.model_json_schema()
         else:
             parameters = getattr(self, 'args_schema_raw', {"type": "object", "properties": {}})
+
+        # Auto-inject wait_for_previous
+        if "properties" in parameters:
+            parameters["properties"]["wait_for_previous"] = {
+                "type": "boolean",
+                "description": "If True, wait for preceding tools in the same turn to finish."
+            }
 
         return {
             "type": "function",

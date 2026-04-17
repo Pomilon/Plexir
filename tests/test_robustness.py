@@ -20,6 +20,11 @@ class MockProvider:
         self.current_fails = 0
         self.error_type = error_type
         self.model_name = "mock-model"
+        self.config = MagicMock()
+        self.config.context_limit = 10000
+
+    async def count_tokens(self, h, s):
+        return 10
 
     async def generate(self, history, system_instruction) -> AsyncGenerator[Any, None]:
         if self.should_fail:
@@ -193,6 +198,8 @@ def test_tool_schema_generation():
     gemini_schema_broken = t3.to_gemini_schema
     openai_schema_broken = t3.to_openai_schema
     
-    assert gemini_schema_broken["parameters"]["properties"] == {}
-    assert openai_schema_broken["function"]["parameters"]["properties"] == {}
+    # Should only contain the common parameters (wait_for_previous)
+    assert "wait_for_previous" in gemini_schema_broken["parameters"]["properties"]
+    assert len(gemini_schema_broken["parameters"]["properties"]) == 1
+    assert "wait_for_previous" in openai_schema_broken["function"]["parameters"]["properties"]
 

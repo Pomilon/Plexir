@@ -418,5 +418,62 @@ SandboxSyncScreen {
 #btn-cancel {
     width: 1fr;
     background: $boost;
-    }
+}
+
+.subagent-progress {
+    border-left: dashed $secondary;
+    background: $panel;
+    margin: 1 2;
+    padding: 0 1;
+    height: auto;
+}
+
+.subagent-header {
+    color: $secondary;
+    text-style: bold;
+    margin: 0 1;
+}
+
+.subagent-text {
+    background: transparent;
+    margin: 0;
+    padding: 0 1;
+    color: $foreground;
+    opacity: 0.9;
+}
+
+.subagent-thought {
+    color: $boost;
+    text-style: italic;
+}
+
+.summarization-block {
+    background: $boost 15%;
+    border: dashed $warning;
+    margin: 1 4;
+    padding: 1 2;
+    height: auto;
+    text-align: center;
+}
+
+.summary-header {
+    color: $warning;
+    text-style: bold;
+    text-align: center;
+    margin-bottom: 1;
+}
+
+.summary-details {
+    color: $foreground;
+    opacity: 0.8;
+    text-align: center;
+}
+
+.system-notice {
+    color: $primary;
+    text-align: center;
+    text-style: bold italic;
+    margin: 1 0;
+}
+
 

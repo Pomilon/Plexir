@@ -7,123 +7,191 @@ logger = logging.getLogger(__name__)
 DEFAULT_MAX_DISTILLED_CHARS = 1000 
 MAX_MESSAGE_LENGTH = 200 
 RECENT_MESSAGES_COUNT = 5 
-KEEP_LAST_MESSAGES = 4 
+KEEP_LAST_MESSAGES = 10 
 
 def estimate_token_count(content: Any) -> int:
     """
     Estimates the number of tokens in a message or list of messages.
     Uses a standard heuristic of approx 1.3 tokens per word (more accurate than chars/4).
     """
+    if content is None:
+        return 0
+
     if isinstance(content, str):
+        if not content.strip():
+            return 0
         # 1.3 tokens per word is a common industry standard for English
-        return int(len(content.split()) * 1.3) + 2 # +2 for potential special tokens
+        # We also add a small buffer for special tokens and structure
+        return int(len(content.split()) * 1.3) + 2
     
     if isinstance(content, list):
-        total = 0
-        for item in content:
-            total += estimate_token_count(item)
-        return total
+        return sum(estimate_token_count(item) for item in content)
 
     if isinstance(content, dict):
         total = 0
-        if "content" in content:
+        # Check standard message fields
+        if "content" in content and content["content"]:
             total += estimate_token_count(content["content"])
-        if "parts" in content:
-            # Recursively count parts
+        
+        if "parts" in content and isinstance(content["parts"], list):
             for part in content["parts"]:
                 if isinstance(part, dict):
+                    # Text and Thought
                     if "text" in part: total += estimate_token_count(part["text"])
-                    elif "thought" in part: total += estimate_token_count(part["thought"])
-                    # Rough estimate for tool calls/responses as strings
-                    elif "function_call" in part: total += estimate_token_count(str(part["function_call"]))
-                    elif "function_response" in part: total += estimate_token_count(str(part["function_response"]))
+                    if "thought" in part: total += estimate_token_count(part["thought"])
+                    
+                    # Tool Calls (JSON-like structure)
+                    if "function_call" in part:
+                        fc = part["function_call"]
+                        total += estimate_token_count(fc.get("name", ""))
+                        total += estimate_token_count(str(fc.get("args", "")))
+                        total += 10 # Structural overhead for call
+                    
+                    # Tool Responses
+                    if "function_response" in part:
+                        fr = part["function_response"]
+                        total += estimate_token_count(fr.get("name", ""))
+                        # Results can be large; stringify and count
+                        total += estimate_token_count(str(fr.get("response", "")))
+                        total += 10 # Structural overhead for response
                 else:
                     total += estimate_token_count(str(part))
-        return total + 4 # Overhead for message structure
+        
+        # If it's just a generic dict, count its string representation
+        if not total and content:
+            return estimate_token_count(str(content))
+            
+        return total + 4 # Per-message overhead
 
-    return int(len(str(content)).split() * 1.3)
+    # Fallback for other types
+    try:
+        words = str(content).split()
+        return int(len(words) * 1.3) + 2
+    except Exception:
+        return 0
 
 def distill(history: List[Dict[str, Any]], max_chars: int = DEFAULT_MAX_DISTILLED_CHARS) -> str:
     """
-    Distills the conversation history into a concise context summary.
-    Respects max_chars to ensure it fits within the token budget.
+    Distills conversation history with a focus on technical artifacts and core intent.
+    Preserves file paths, tool calls, and high-signal technical content.
     """
+    if not history:
+        return "[No previous history to summarize]"
+
     distilled_parts = []
     current_length = 0
-    
-    # Reserve space for wrapper text
-    wrapper_overhead = 100 
-    available_chars = max(0, max_chars - wrapper_overhead)
+    # Reserve a small space for the header/footer
+    available_chars = max(0, max_chars - 50)
 
-    # Iterate through history in reverse to prioritize recent messages within the summary block
+    # Patterns to preserve at all costs
+    TECH_PATTERNS = [
+        re.compile(r"/[a-zA-Z0-9/_.-]+\.[a-zA-Z0-9]+"), # File paths with extensions
+        re.compile(r"class [a-zA-Z0-9]+"),              # Class names
+        re.compile(r"def [a-zA-Z0-9_]+"),                # Func signatures
+        re.compile(r"0x[a-fA-F0-9]+"),                  # Addresses/Hashes
+        re.compile(r"OBJECTIVE:.*"),                    # Sub-agent objectives
+    ]
+
     for msg in reversed(history):
-        # Extract role and content
         role = msg.get("role", "unknown")
         content = ""
 
-        # Handle different message types
         if "content" in msg:
             content = msg["content"]
         elif "parts" in msg:
-            part_texts = []
-            for part in msg["parts"]:
-                if isinstance(part, dict):
-                    if "function_call" in part:
-                        fc = part["function_call"]
-                        part_texts.append(f"Function Call: {fc['name']}({fc['args']})")
-                    elif "function_response" in part:
-                        fr = part["function_response"]
-                        part_texts.append(f"Function Response: {fr['name']} -> {fr['response']}")
-                    else: 
-                        part_texts.append(str(part))
-                else: 
-                    part_texts.append(str(part))
-            content = "\n".join(part_texts)
+            parts = []
+            for p in msg["parts"]:
+                if "text" in p: parts.append(p["text"])
+                if "function_call" in p: parts.append(f"CALL: {p['function_call']['name']}({p['function_call']['args']})")
+                if "function_response" in p: 
+                    res = p["function_response"].get("response", {}).get("result", "")
+                    parts.append(f"RESULT: {str(res)[:200]}...") # Truncate large tool results
+            content = "\n".join(parts)
 
-        # Truncate long individual messages
-        if len(content) > MAX_MESSAGE_LENGTH:
-            content = content[:MAX_MESSAGE_LENGTH] + "... (truncated)"
+        # High-signal extraction
+        lines = content.split("\n")
+        preserved_lines = []
+        for line in lines:
+            # We keep lines that are:
+            # 1. Technical (match patterns)
+            # 2. Short-ish (likely headers or commands)
+            # 3. From the User (more likely to contain core instructions)
+            if any(p.search(line) for p in TECH_PATTERNS) or len(line) < 120 or role == "user":
+                preserved_lines.append(line)
         
-        formatted_message = f"{role.upper()}: {content}\n"
+        # If we still have too much, we take the head and tail of the message
+        if preserved_lines:
+            content = "\n".join(preserved_lines)
         
+        if len(content) > 1000:
+            content = content[:500] + "\n... [TRUNCATED] ...\n" + content[-500:]
+
+        formatted_message = f"[{role.upper()}]: {content}\n"
         if current_length + len(formatted_message) > available_chars:
             break
         
         distilled_parts.insert(0, formatted_message)
         current_length += len(formatted_message)
-
-        # Stop if we have enough recent messages
-        if len(distilled_parts) >= RECENT_MESSAGES_COUNT and current_length > available_chars / 2:
-            break
             
     if not distilled_parts:
-        return "No relevant recent context available (truncated)."
+        return "[No significant history to distill]"
+        
+    return "--- Episodic Summary (Technical) ---\n" + "".join(distilled_parts) + "\n----------------------------------"
 
-    return "--- Distilled Previous Context ---\n" + "".join(distilled_parts) + "----------------------------------"
+import re
 
-def get_messages_to_summarize(history: List[Dict[str, Any]], count: int) -> tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+def get_messages_to_summarize(history: List[Dict[str, Any]], count: int = 0) -> tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
     """
-    Splits history into 'to be summarized' and 'to keep' (pinned or recent).
-    """
-    to_summarize = []
-    to_keep = []
+    Intelligently splits history for summarization while preserving Gemini-required sequences.
     
-    # We never summarize the last 10 messages to keep immediate flow
-    keep_recent = history[-10:] if len(history) > 10 else history
-    history_old = history[:-10] if len(history) > 10 else []
+    Rules:
+    1. Keep the FIRST message.
+    2. Keep ALL pinned messages.
+    3. Keep the LAST ~10 messages.
+    4. CRITICAL: Never split a model 'function_call' from its user 'function_response'.
+    """
+    if len(history) <= 15:
+        return [], history
 
-    for msg in history_old:
+    # Initial split point
+    split_idx = len(history) - 10
+    
+    # Adjust split_idx to ensure we don't break a call/response pair.
+    # If history[split_idx] is a 'user' message containing a 'function_response',
+    # we MUST move the split back to include the preceding 'model' call in the 'keep' section.
+    while split_idx > 1:
+        msg = history[split_idx]
+        # Check if this message is a tool response
+        is_response = False
+        if msg.get("role") == "user" and "parts" in msg:
+            for part in msg["parts"]:
+                if "function_response" in part:
+                    is_response = True
+                    break
+        
+        if is_response:
+            # We must keep the preceding model call too
+            split_idx -= 1
+        else:
+            # Not a response, safe to split here (the preceding message isn't a call we're orphaned from)
+            break
+
+    to_summarize = []
+    to_keep_meta = [] # For pinned and first
+    
+    first_msg = history[0]
+    to_keep_meta.append(first_msg)
+    
+    recent_msgs = history[split_idx:]
+    middle_history = history[1:split_idx]
+    
+    for msg in middle_history:
         if msg.get("pinned"):
-            to_keep.append(msg)
+            to_keep_meta.append(msg)
         else:
             to_summarize.append(msg)
             
-    if len(to_summarize) > count:
-        remaining = to_summarize[count:]
-        to_summarize = to_summarize[:count]
-        to_keep = to_keep + remaining
-
-    return to_summarize, to_keep + keep_recent
+    return to_summarize, to_keep_meta + recent_msgs
 
 def enforce_context_limit(
     history: List[Dict[str, Any]], 
@@ -173,18 +241,30 @@ def enforce_context_limit(
         return recent_history
 
     # Distill older history into the available token budget
-    # Convert tokens to chars (approx * 4)
-    max_summary_chars = available_tokens_for_summary * 4
-    
+    if not older_history:
+        # If we have no older history to summarize but we're still over limit,
+        # we must truncate the recent history further.
+        logger.warning("Limit exceeded but no older history to summarize. Truncating recent history.")
+        while recent_history and (estimate_token_count(recent_history) + sys_tokens > limit):
+            recent_history.pop(0)
+        return recent_history
+
+    max_summary_chars = max(200, available_tokens_for_summary * 4)
     summary_text = distill(older_history, max_chars=max_summary_chars)
+    
     summary_message = {
-        "role": "user",
-        "content": f"[System Note: The beginning of this conversation has been summarized due to length constraints.]\n{summary_text}"
+        "role": "system",
+        "content": f"BACKGROUND SUMMARY of previous conversation:\n{summary_text}",
+        "pinned": True
     }
     
     new_history = [summary_message] + recent_history
     
+    # Check if we are still over the limit (recursive call for safety)
     new_tokens = estimate_token_count(new_history) + sys_tokens
-    logger.info(f"Pruned context size: {new_tokens} tokens (Limit: {limit}).")
+    if new_tokens > limit:
+        logger.warning(f"Pruned history ({new_tokens}) still exceeds limit ({limit}). Retrying...")
+        return enforce_context_limit(new_history, limit, system_instruction, current_tokens=new_tokens)
     
+    logger.info(f"Pruned context size: {new_tokens} tokens (Limit: {limit}).")
     return new_history

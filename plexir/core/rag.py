@@ -16,6 +16,20 @@ class CodebaseRetriever:
     """
     Helper class to perform semantic-like searches using basic tools (grep/ast).
     """
+    _repo_map_cache: Dict[str, str] = {}
+
+    @staticmethod
+    def get_cached_repo_map(root_dir: str = ".", max_depth: int = 3) -> str:
+        """Returns the repo map from cache or generates a new one."""
+        cache_key = f"{root_dir}_{max_depth}"
+        if cache_key not in CodebaseRetriever._repo_map_cache:
+            CodebaseRetriever._repo_map_cache[cache_key] = CodebaseRetriever.generate_repo_map(root_dir, max_depth)
+        return CodebaseRetriever._repo_map_cache[cache_key]
+
+    @staticmethod
+    def clear_cache():
+        """Clears all retrieval caches."""
+        CodebaseRetriever._repo_map_cache.clear()
 
     @staticmethod
     def extract_keywords(query: str) -> List[str]:

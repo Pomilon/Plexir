@@ -8,7 +8,7 @@ import logging
 import os
 import tarfile
 import io
-from typing import List, Optional
+from typing import List, Optional, AsyncGenerator, Dict
 import docker
 from docker.errors import ImageNotFound, ContainerError, APIError
 from pydantic import BaseModel, Field
@@ -193,20 +193,82 @@ class PersistentSandbox:
             logger.error(f"Export failed: {e}")
             raise e
 
+    async def stream_exec(self, cmd: str) -> AsyncGenerator[str, None]:
+        """
+        Executes a command and yields output chunks in real-time.
+        Simulates a TTY-like streaming experience.
+        """
+        if not self.container:
+            yield "Error: Sandbox container not running."
+            return
+
+        try:
+            # Create the exec instance
+            exec_id = await asyncio.to_thread(
+                self.client.api.exec_create,
+                self.container.id,
+                cmd=["/bin/sh", "-c", cmd],
+                workdir="/workspace",
+                environment={"PLEXIR_SANDBOX": "1", "TERM": "xterm-256color"},
+                tty=True
+            )
+            
+            # Attach to the socket and stream output
+            socket = await asyncio.to_thread(
+                self.client.api.exec_start,
+                exec_id["Id"],
+                detach=False,
+                tty=True,
+                stream=True
+            )
+
+            # yield from the generator
+            for chunk in socket:
+                yield chunk.decode("utf-8")
+        
+        except Exception as e:
+            logger.error(f"Sandbox stream_exec error: {e}")
+            yield f"Error: {e}"
+
     async def exec(self, cmd: str) -> str:
         """Executes a command inside the persistent sandbox."""
         if not self.container:
             return "Error: Sandbox container not running."
         try:
+            # We add a hidden marker to detect the end of command output for streaming if needed
             exec_res = await asyncio.to_thread(
                 self.container.exec_run,
                 ["/bin/sh", "-c", cmd],
-                workdir="/workspace"
+                workdir="/workspace",
+                environment={"PLEXIR_SANDBOX": "1", "TERM": "xterm-256color"}
             )
             return exec_res.output.decode("utf-8")
         except Exception as e:
             logger.error(f"Sandbox exec error: {e}")
             return f"Error: {e}"
+
+    async def get_state_delta(self) -> dict:
+        """
+        Returns a delta of the container state (file changes and active processes).
+        Uses 'find' and 'ps' within the container.
+        """
+        if not self.container:
+            return {}
+
+        # 1. Check for file changes using find (modification time in last minute)
+        # This is a lightweight 'siphon' compared to a full git diff.
+        files_cmd = "find /workspace -type f -mmin -1 -not -path '*/.*' 2>/dev/null"
+        changed_files = (await self.exec(files_cmd)).strip().split("\n")
+        changed_files = [f for f in changed_files if f]
+
+        # 2. Check for active processes
+        ps_cmd = "ps -eo pid,comm,args --sort=-%cpu | head -n 5"
+        processes = (await self.exec(ps_cmd)).strip()
+
+        return {
+            "changed_files": changed_files,
+            "top_processes": processes
+        }
 
     async def stop(self):
         """Stops the persistent sandbox without removing it."""

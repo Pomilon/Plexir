@@ -130,7 +130,7 @@ class GeminiOAuthClient:
                         except json.JSONDecodeError:
                             continue
 
-    async def count_tokens(self, model: str, contents: list, config: Any = None) -> int:
+    async def count_tokens(self, model: str, contents: list, system_instruction: Optional[str] = None) -> int:
         """
         Counts tokens for the given content using the REST API.
         """
@@ -142,13 +142,9 @@ class GeminiOAuthClient:
             "contents": [self._serialize_content(c) for c in contents]
         }
         
-        # System instruction affects tokens
-        if config and hasattr(config, 'system_instruction') and config.system_instruction:
-             si = config.system_instruction
-             if isinstance(si, str):
-                 payload["systemInstruction"] = {"parts": [{"text": si}]}
-             else:
-                 payload["systemInstruction"] = self._serialize_content(si)
+        # System instruction affects tokens if supported by API/model
+        if system_instruction:
+             payload["systemInstruction"] = {"parts": [{"text": system_instruction}]}
 
         headers = {
             "Authorization": f"Bearer {token}",
@@ -163,6 +159,25 @@ class GeminiOAuthClient:
             
             data = response.json()
             return data.get("totalTokens", 0)
+
+    async def list_models(self) -> list[str]:
+        """Lists available models via the REST API."""
+        token = await self._get_valid_token()
+        url = f"{self.BASE_URL}/models"
+        
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json"
+        }
+
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.get(url, headers=headers)
+            if response.status_code != 200:
+                logger.error(f"Gemini listModels error {response.status_code}: {response.text}")
+                return []
+            
+            data = response.json()
+            return [m.get("name", "").replace("models/", "") for m in data.get("models", [])]
 
     def _serialize_content(self, content: Any) -> Dict:
         """Serializes google.genai.types.Content to dict."""
