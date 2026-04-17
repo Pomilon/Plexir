@@ -13,6 +13,14 @@ from plexir.core.config_manager import config_manager
 
 class MessageContent(MarkdownWidget):
     """Widget to display message content with Markdown support."""
+    def __init__(self, content: str = "", **kwargs):
+        super().__init__(content, **kwargs)
+        self.content = content
+
+    async def update(self, content: str):
+        """Updates the widget content and raw storage."""
+        self.content = content
+        await super().update(content)
 
 class MessageBubble(Container):
     """Wraps a single message (user, AI, or system) with a header and content."""
@@ -43,7 +51,8 @@ class MessageBubble(Container):
         with Horizontal(classes="message-header"):
             yield Label(role_label, classes=f"message-author role-{self.role}")
 
-        yield MessageContent(self.initial_content, id="message-text", classes="message-content")
+        if self.initial_content:
+            yield MessageContent(self.initial_content, id="message-text", classes="message-content")
 
 class StatsPanel(Static):
 
@@ -168,6 +177,33 @@ class WorkspaceTree(Container):
         """Composes the workspace tree layout."""
         yield Label("WORKSPACE", classes="sidebar-header")
         yield DirectoryTree("./", id="file-tree")
+
+class SubAgentProgress(Container):
+    """Container for a single sub-agent's lifecycle (thoughts, tools, output)."""
+    def __init__(self, agent_name: str, **kwargs):
+        super().__init__(**kwargs)
+        self.agent_name = agent_name
+        self.add_class("subagent-progress")
+
+    def compose(self) -> ComposeResult:
+        yield Label(f"🤖 [bold]{self.agent_name.upper()}[/bold] WORKING...", classes="subagent-header")
+
+class SummarizationBlock(Static):
+    """Informative notice displayed when conversation is summarized."""
+    def __init__(self, current_tokens: int, limit: int, message_count: int):
+        super().__init__()
+        self.current_tokens = current_tokens
+        self.limit = limit
+        self.message_count = message_count
+        self.add_class("summarization-block")
+
+    def compose(self) -> ComposeResult:
+        yield Label("🔄 CONTEXT CONDENSATION", classes="summary-header")
+        yield Label(
+            f"Threshold reached: {self.current_tokens:,} tokens ({self.message_count} msgs).\n"
+            f"Condensing to ~30% of context window ({self.limit:,} tokens) to maintain peak performance.",
+            classes="summary-details"
+        )
 
 class ToolOutput(Container):
     """Widget to display tool execution details and output (Always visible)."""

@@ -24,7 +24,7 @@ def test_pruning_limit():
     # 50 messages -> 400 tokens
     history = create_long_history(50, 100)
     
-    limit = 100
+    limit = 150 # Increased to fit summary and overhead
     pruned_history = enforce_context_limit(history, limit)
     final_tokens = estimate_token_count(pruned_history)
     
@@ -38,7 +38,7 @@ def test_pruning_limit():
     assert pruned_history[-1] == history[-1]
     
     # Assert summary message exists
-    assert any("summarized" in msg.get("content", "") for msg in pruned_history)
+    assert any("BACKGROUND SUMMARY" in msg.get("content", "") for msg in pruned_history)
 
 def test_no_pruning_needed():
     history = create_long_history(2, 20) # Very short

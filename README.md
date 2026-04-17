@@ -4,31 +4,27 @@
 
 ![Plexir UI](assets/image.png)
 
-[![Version](https://img.shields.io/badge/version-1.9.0-blue.svg)](https://github.com/pomilon/plexir)
+[![Version](https://img.shields.io/badge/version-1.10.0-blue.svg)](https://github.com/pomilon/plexir)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 ---
 
 ## Features
 
+- **Omni-Agent Core (v1.10+)**: 
+    - **Async Turn Generator**: Non-blocking TUI execution for long-running autonomous tasks.
+    - **State Siphon**: Optimized context via workspace deltas and process monitoring.
 - **Multi-Provider Failover**: Seamlessly switch between Gemini, Groq, Cerebras, and OpenAI-compatible APIs. If one model hits a quota, Plexir automatically fails over to the next in your priority list.
 - **Accuracy & Economics**: 
     - **Native Token Counting**: Integrated Gemini native token counting API for 100% accurate measurement.
     - **Proactive Context Management**: Automatic pruning/summarization when context reaches 90% capacity to prevent truncation errors.
     - **Cost Estimation**: Real-time tracking in the sidebar. Set a session budget via `/config budget`.
 - **Deep Reasoning Support**: Native support for `reasoning_content` (DeepSeek/OpenRouter) with configurable transparency (toggle blocks with `/config reasoning`).
-- **Responsive Interaction**:
-    - **Message Queuing**: Submit messages while the AI is busy; they appear in a "queued" state and process sequentially.
-    - **Interactive Queue Management**: Click a queued message to "unroll" the queue and pull messages back to the input for editing.
-- **Coherent Memory**:
-    - **Persistent Memory Bank**: Semantic storage (`chromadb`) for long-term facts using `/memory save`.
-    - **Session-Scoped Scratchpad**: Isolated planning space (`scratchpad` tool) that persists within a session but doesn't pollute global history.
-    - **Rolling Summarization**: Automatically condenses long histories.
-    - **Message Pinning**: `/session pin` ensures critical context is never lost.
-- **Persistent Docker Sandbox**: Launch with `--sandbox` to give the AI its own persistent Linux "computer." All tools (file system, git, shell) are automatically redirected inside the container.
+- **Persistent Docker Sandbox**: Launch with `--sandbox` to give the AI its own persistent Linux "computer." All tools (file system, git, shell) are automatically redirected inside the container. Includes **State Siphon** for tracking file system deltas.
+- **Advanced Policy Engine**: Hierarchical security rules for shell commands (Allow/Prompt/Forbidden) with JIT approval persistence.
 - **Deep MCP Integration**: Fully supports **Model Context Protocol (MCP)**, including dynamic discovery of tools, **Resources**, and **Prompts**.
 - **Smart Agent Capabilities**:
-    - **Delegation**: `delegate_to_agent` allows spawning specialized sub-agents for complex tasks.
+    - **Delegation**: `delegate_to_agent` allows spawning specialized sub-agents (`coder`, `tester`, `researcher`, `reviewer`) for complex tasks.
     - **RAG & Context**: `codebase_search` allows natural language queries across your codebase.
     - **Visual Safety**: Critical actions like writing files show a **Rich Visual Diff** (Red/Green) in the confirmation modal.
 - **Advanced Agentic Tools**:

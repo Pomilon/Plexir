@@ -29,11 +29,19 @@ Plexir agents are equipped with a powerful set of tools to interact with the sys
 
 | Tool | Description | Critical? |
 | :--- | :--- | :--- |
-| `delegate_to_agent` | Spawns a specialized sub-agent (e.g., `researcher`) to handle complex sub-tasks autonomously. | No |
+| `delegate_to_agent` | Spawns a specialized sub-agent to handle complex sub-tasks autonomously. | No |
 | `save_memory` | Saves a specific fact or piece of information to long-term storage (`chromadb`). | No |
 | `search_memory` | Retrieves relevant memories based on a semantic query. | No |
 | `codebase_search` | Semantically searches code using natural language keywords. | No |
 | `scratchpad` | Reads/Writes/Clears a session-scoped memory file for planning and note-taking. | No |
+
+### Sub-Agent Roles
+When `delegate_to_agent` is used, the agent can specify a role:
+- **`coder`**: Optimized for implementation, refactoring, and bug fixes.
+- **`tester`**: Specialized in writing and running verification suites.
+- **`researcher`**: Uses web tools and documentation to find solutions.
+- **`reviewer`**: Analyzes code changes for quality and style.
+- **`codebase_investigator`**: Maps large repositories and finds architectural patterns.
 
 ## MCP & Extensibility
 

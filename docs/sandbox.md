@@ -12,14 +12,16 @@ When you launch Plexir with the `--sandbox` flag:
 ## Benefits
 
 - **Safety**: The AI can execute any bash command or Python script without risk to your local files or operating system.
+- **State Siphon**: Plexir monitors the sandbox for file changes and active processes, sending optimized deltas to the LLM to keep the context window lean.
 - **Persistence**: Unlike one-off sandboxes, the persistent sandbox keeps its state between Plexir sessions. Any files the AI creates or packages it installs (via `apt` or `pip`) will be there the next time you launch with `--sandbox`.
-- **Reproducibility**: The sandbox provides a clean, standard environment (`python:3.10-slim`) for the AI to work in.
+- **Hardened Security**: The container runs with limited capabilities (`cap_drop=["ALL"]`), preventing unauthorized system-level changes while allowing necessary file operations.
 
 ## Technical Details
 
 - **Image**: `python:3.10-slim`
-- **Memory Limit**: 512MB
+- **Memory Limit**: 1024MB (v1.10+)
 - **Network**: Bridge (allows internet access for web tools/package installs).
+- **Security Options**: `no-new-privileges` enabled.
 - **Graceful Shutdown**: When you exit Plexir, the container is stopped to save resources but is **not** removed, preserving the AI's workspace.
 
 ## Troubleshooting

@@ -8,7 +8,7 @@ import logging
 import os
 import time
 import threading
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Union
 import subprocess
 
 from textual.app import App, ComposeResult
@@ -17,13 +17,14 @@ from textual.containers import VerticalScroll
 from textual.theme import Theme
 from textual import work, on, events
 
-from plexir.ui.widgets import MessageContent, ToolStatus, StatsPanel, MessageBubble, ToolOutput
+from plexir.ui.widgets import MessageContent, ToolStatus, StatsPanel, MessageBubble, ToolOutput, SubAgentProgress, SummarizationBlock
 from plexir.ui.app_layout import compose_main_layout
 from plexir.ui.screens import ConfirmToolCall, SandboxSyncScreen
 from plexir.core.router import Router, RouterEvent
 from plexir.core.commands import CommandProcessor
 from plexir.core.config_manager import config_manager
 from plexir.core.session import SessionManager
+from plexir.core.policy import policy_manager, Decision
 
 logger = logging.getLogger(__name__)
 
@@ -125,6 +126,7 @@ class PlexirApp(App):
         self.message_queue_list: List[str] = []
         self.queue_condition = asyncio.Condition()
         self.queued_bubbles: List[tuple[str, MessageBubble]] = []
+        self.active_subagent_container = None
 
     async def on_mount(self) -> None:
         """Initializes providers, UI state, and theme on startup."""
@@ -587,6 +589,79 @@ class PlexirApp(App):
 
     # --- AI Orchestration ---
 
+    async def subagent_event_callback(self, event: Union[str, Dict[str, Any], RouterEvent]):
+        """Callback to handle sub-agent progress events and stream them to the UI."""
+        chat_scroll = self.query_one("#chat-scroll", VerticalScroll)
+
+        # 1. Handle Sub-agent Lifecycle (Start/End)
+        if isinstance(event, RouterEvent):
+            if event.type == RouterEvent.SUBAGENT_START:
+                # Find the HOST bubble (the last AI message)
+                try:
+                    model_bubble = list(chat_scroll.query(MessageBubble).results())[-1]
+                    self.active_subagent_container = SubAgentProgress(agent_name=event.data)
+                    await model_bubble.mount(self.active_subagent_container)
+                    chat_scroll.scroll_end(animate=False)
+                except (IndexError, Exception):
+                    pass
+                return
+            elif event.type == RouterEvent.SUBAGENT_END:
+                if self.active_subagent_container:
+                    try:
+                        self.active_subagent_container.query_one(".subagent-header", Label).update(f"✅ [bold]{event.data.upper()}[/bold] FINISHED.")
+                    except Exception: pass
+                self.active_subagent_container = None
+                return
+
+        # 2. Routing Events into the Container
+        # If no active container, fallback to last model bubble
+        target = self.active_subagent_container
+        if not target:
+            try:
+                target = list(chat_scroll.query(MessageBubble).results())[-1]
+            except (IndexError, Exception):
+                return
+
+        if isinstance(event, str):
+            # Stream text from sub-agent
+            try:
+                sub_text_widget = target.query_one(".subagent-text", MessageContent)
+            except Exception:
+                sub_text_widget = MessageContent("", classes="subagent-text")
+                await target.mount(sub_text_widget)
+
+            await sub_text_widget.update(sub_text_widget.content + event)
+
+        elif isinstance(event, dict):
+            if event.get("type") == "tool_call":
+                # Display tool call from sub-agent
+                await target.mount(ToolOutput(f"🛠️ {event['name']}", str(event['args']), "..."))
+            elif event.get("type") == "tool_result":
+                # Find the last tool output and update it
+                try:
+                    tool_output = list(target.query(ToolOutput).results())[-1]
+                    # Update tool result; note that Static.update is sync
+                    tool_output.query_one(".tool-result", Static).update(str(event['result']))
+                except Exception:
+                    pass
+
+        elif isinstance(event, RouterEvent):
+            if event.type == RouterEvent.THOUGHT:
+                # Handle sub-agent thinking
+                try:
+                    sub_thought_widget = target.query_one(".subagent-thought", MessageContent)
+                except Exception:
+                    sub_thought_widget = MessageContent("", classes="subagent-thought")
+                    collapsible = Collapsible(sub_thought_widget, title="Sub-agent Thinking", collapsed=True)
+                    await target.mount(collapsible)
+
+                await sub_thought_widget.update(sub_thought_widget.content + event.data)
+
+            elif event.type == RouterEvent.SYSTEM:
+                await target.mount(Static(f"🤖 {event.data}", classes="system-notice"))
+
+        # Ensure scroll follows progress
+        chat_scroll.scroll_end(animate=False)
     @work
     async def generate_response(self) -> None:
         """Background worker that handles LLM generation and tool execution loop."""
@@ -594,239 +669,190 @@ class PlexirApp(App):
         tool_status = self.query_one("#tool-status", ToolStatus)
         chat_scroll = self.query_one("#chat-scroll", VerticalScroll)
         
-        # Start a new bubble for this generation session
+        # 1. Start a new model bubble
         model_bubble = MessageBubble(role="model", content="")
         await chat_scroll.mount(model_bubble)
-        
-        # Give a tiny bit of time for compose
         await asyncio.sleep(0.01)
-        current_text_widget = model_bubble.query_one("#message-text", MessageContent)
-        current_text_buffer = ""
-        
-        # Optimization: Dynamic Throttling
-        last_update_time = 0
-        
-        # Base interval
-        base_interval = 0.05 
 
         start_time = time.monotonic()
         stats.status = "Generating"
-        stats.latency = 0.0
         tool_status.set_status("Thinking...", running=True)
-        
-        try:
-            if not self.router.providers:
-                await self.router.reload_providers()
-                
-            if not self.router.providers:
-                stats.model_name = "None"
-                tool_status.set_status("No active provider.", running=False)
-                current_text_widget.update(
-                    "[ERROR] No LLM providers configured or available.\n\n"
-                    "Please check your API keys and provider settings using `/config list`."
-                )
-                return
-                
-            if self.router.active_provider_index >= len(self.router.providers):
-                self.router.active_provider_index = 0
-                
-            active_provider = self.router.providers[self.router.active_provider_index]
-            stats.model_name = active_provider.name
-        except Exception as e:
-            logger.error(f"Initialization error in generate_response: {e}")
-            current_text_widget.update(f"[ERROR] Failed to initialize providers: {e}")
-            return
+
+        active_summary_block = None
 
         try:
-            while True:
+            # Ensure tools have access to the UI callback
+            await self.router.reload_providers(on_event=self.subagent_event_callback)
+
+            while True: # Main turn loop (continues if tools are called)
                 tool_called = False
+                is_thinking = False # Track if we are currently in a <think> block
                 
-                # Reasoning state
-                reasoning_content = ""
-                is_thinking = False
+                # Turn-specific state
+                current_text_widget = None
+                current_thought_widget = None
+                current_text_buffer = ""
+                current_thought_buffer = ""
                 
                 async for chunk in self.router.route(self.history):
+                    # Clean up summarization block when we start getting real output/work
+                    if active_summary_block and (isinstance(chunk, str) or (isinstance(chunk, RouterEvent) and chunk.type in (RouterEvent.SUBAGENT_START, RouterEvent.PROGRESS, RouterEvent.THOUGHT, RouterEvent.FAILOVER))):
+                        try:
+                            await active_summary_block.remove()
+                        except Exception: pass
+                        active_summary_block = None
+
                     stats.latency = time.monotonic() - start_time
                     
+                    # --- Event Handling ---
                     if isinstance(chunk, RouterEvent):
                         if chunk.type == RouterEvent.FAILOVER:
-                            new_name = chunk.data or "Backup"
-                            stats.model_name = new_name
-                            warning = Static(f"⚠️ FAILOVER: SWITCHING TO [bold]{new_name}[/bold]...", classes="failover-warning")
-                            await chat_scroll.mount(warning)
-                            chat_scroll.scroll_end(animate=False)
-                            # Reset buffer for new stream
-                            current_text_buffer = ""
-                            current_text_widget.update("")
-
+                            stats.model_name = chunk.data or "Backup"
+                            await model_bubble.mount(Static(f"⚠️ FAILOVER: SWITCHING TO {chunk.data}...", classes="failover-warning"))
+                        
                         elif chunk.type == RouterEvent.RETRY:
+                            tool_status.set_status(f"⏳ RATE LIMIT: Retrying {chunk.data['attempt']}...", running=True)
+                            # On retry, we keep the bubble but might want to signal a clear break
+                            await model_bubble.mount(Static("--- RETRYING STREAM ---", classes="system-notice"))
+
+                        elif chunk.type == RouterEvent.SUMMARIZATION:
+                            # Show technical condensation notice
                             data = chunk.data
-                            retry_msg = f"⏳ [yellow]RATE LIMIT HIT[/yellow] on {data['provider']}. Retrying ({data['attempt']}/{data['max']})..."
-                            tool_status.set_status(retry_msg, running=True)
-                            # Reset buffer for retry
-                            current_text_buffer = ""
-                            current_text_widget.update("")
+                            active_summary_block = SummarizationBlock(
+                                current_tokens=data["current_tokens"],
+                                limit=data["limit"],
+                                message_count=data["message_count"]
+                            )
+                            await chat_scroll.mount(active_summary_block)
+                            chat_scroll.scroll_end(animate=False)
 
                         elif chunk.type == RouterEvent.USAGE:
-                            data = chunk.data
-                            stats.ctx_tokens = data.get("last_context_tokens", 0)
-                            stats.total_tokens = self.router.session_usage["total_tokens"]
+
                             stats.cost = self.router.session_usage["total_cost"]
-                        
-                        elif chunk.type == "system":
-                            # Handle system messages from router (like pruning notice)
-                            self.notify(chunk.data)
-                            notice = Static(f"ℹ️ {chunk.data}", classes="system-notice")
-                            await chat_scroll.mount(notice)
-                            chat_scroll.scroll_end(animate=True)
+                            stats.total_tokens = self.router.session_usage["total_tokens"]
+                            stats.ctx_tokens = chunk.data.get("last_context_tokens", 0)
+
+                        elif chunk.type == RouterEvent.THOUGHT:
+                            # NATIVE REASONING (Gemini 2.0 style)
+                            if not current_thought_widget:
+                                is_collapsed = not config_manager.config.expanded_reasoning
+                                current_thought_widget = MessageContent("")
+                                collapsible = Collapsible(current_thought_widget, title="Reasoning Process", collapsed=is_collapsed)
+                                await model_bubble.mount(collapsible)
+                            
+                            current_thought_buffer += chunk.data
+                            await current_thought_widget.update(current_thought_buffer)
+                            tool_status.set_status("Thinking...", running=True)
                         continue
-                    
+
+                    # --- Tool Call Handling ---
                     if isinstance(chunk, dict) and chunk.get("type") == "tool_call":
+                        tool_called = True
+                        # Finalize any pending text/thought before tool execution
                         if current_text_buffer.strip():
-                            current_text_widget.update(current_text_buffer)
                             self.history.append({"role": "model", "content": current_text_buffer})
-                            current_text_buffer = "" 
+                            current_text_buffer = ""
+                            current_text_widget = None
 
                         tool_name = chunk["name"]
                         args = chunk["args"]
                         tool_id = chunk.get("id", f"call_{int(time.time())}")
                         
+                        # HITL Confirmation
                         tool_instance = self.router.get_tool(tool_name)
-                        if tool_instance and tool_instance.is_critical:
-                            if self.yolo_mode:
-                                tool_status.set_status(f"YOLO: EXECUTING {tool_name}", running=True)
-                                result = await self.router.providers[self.router.active_provider_index].execute_tool(tool_name, args)
-                            else:
-                                tool_status.set_status(f"WAITING FOR CONFIRMATION: {tool_name}", running=False)
-                                # ConfirmToolCall returns: "confirm", "skip", "stop"
-                                action = await self.push_screen_wait(ConfirmToolCall(tool_name, args))
-                                
-                                if action == "stop":
-                                    tool_status.set_status("Stopped", running=False)
-                                    current_text_widget.update(current_text_buffer + "\n\n[Stopped by User]")
-                                    stats.status = "Idle"
-                                    return # Exit generation loop
-                                
-                                elif action == "skip":
-                                    result = "Action skipped by user."
-                                    tool_status.set_status("Skipped", running=False)
-                                
-                                else: # "confirm"
-                                    tool_status.set_status(f"EXECUTING: {tool_name}", running=True)
-                                    result = await self.router.providers[self.router.active_provider_index].execute_tool(tool_name, args)
+                        if tool_instance and tool_instance.is_critical and not self.yolo_mode:
+                            tool_status.set_status(f"CONFIRM: {tool_name}", running=False)
+                            action = await self.push_screen_wait(ConfirmToolCall(tool_name, args))
+                            if action == "stop": return
+                            if action == "skip": result = "Skipped."
+                            else: result = await self.router.providers[self.router.active_provider_index].execute_tool(tool_name, args)
                         else:
-                            tool_status.set_status(f"EXECUTING: {tool_name}", running=True)
+                            tool_status.set_status(f"EXEC: {tool_name}", running=True)
                             result = await self.router.providers[self.router.active_provider_index].execute_tool(tool_name, args)
-                        
-                        # Optimize: Only reload file tree for modifying tools
-                        modifying_prefixes = ("write", "edit", "git", "run_shell", "python_sandbox")
-                        if tool_name.startswith(modifying_prefixes):
-                            try:
-                                self.query_one("#file-tree", DirectoryTree).reload()
-                            except Exception:
-                                pass 
 
-                        tool_widget = ToolOutput(tool_name, str(args), str(result))
-                        await model_bubble.mount(tool_widget)
-                        tool_status.set_status("Ready", running=False)
+                        # Mount Tool UI Block
+                        await model_bubble.mount(ToolOutput(tool_name, str(args), str(result)))
                         
-                        self.history.append({
-                            "role": "model", 
-                            "parts": [{"function_call": {"name": tool_name, "args": args, "id": tool_id}}]
-                        }) 
-                        self.history.append({
-                            "role": "user", 
-                            "parts": [{"function_response": {"name": tool_name, "response": {"result": result}, "id": tool_id}}]
-                        })
+                        # Add to history
+                        self.history.append({"role": "model", "parts": [{"function_call": {"name": tool_name, "args": args, "id": tool_id}}]})
+                        self.history.append({"role": "user", "parts": [{"function_response": {"name": tool_name, "response": {"result": result}, "id": tool_id}}]})
                         
-                        current_text_widget = MessageContent("")
-                        await model_bubble.mount(current_text_widget)
-                        last_update_time = 0 # Reset throttling for new widget
-                        
-                        tool_called = True
-                        break 
-                    
+                        # Reset widgets for next part of stream
+                        current_text_widget = None
+                        current_thought_widget = None
+                        continue 
+
+                    # --- Text / Tag Parsing Handling (DeepSeek style) ---
                     if isinstance(chunk, str):
-                        text_to_process = chunk
-                        while text_to_process:
+                        remaining_text = chunk
+                        while remaining_text:
                             if not is_thinking:
-                                if "<think>" in text_to_process:
-                                    pre, post = text_to_process.split("<think>", 1)
-                                    current_text_buffer += pre
+                                if "<think>" in remaining_text:
+                                    pre, post = remaining_text.split("<think>", 1)
+                                    # Handle pre-thought text
+                                    if pre.strip() or current_text_buffer.strip():
+                                        if not current_text_widget:
+                                            current_text_widget = MessageContent("")
+                                            await model_bubble.mount(current_text_widget)
+                                        current_text_buffer += pre
+                                        await current_text_widget.update(current_text_buffer)
+                                    
+                                    # Enter thinking mode
                                     is_thinking = True
-                                    tool_status.set_status("Thinking...", running=True)
-                                    text_to_process = post
-                                    
-                                    # Update visible text before thinking
-                                    current_text_widget.update(current_text_buffer)
+                                    current_text_widget = None # Break current text block
+                                    remaining_text = post
                                 else:
-                                    current_text_buffer += text_to_process
-                                    text_to_process = ""
-                            else: # is_thinking
-                                if "</think>" in text_to_process:
-                                    thought, post = text_to_process.split("</think>", 1)
-                                    reasoning_content += thought
-                                    is_thinking = False
-                                    
-                                    # Render reasoning
-                                    if reasoning_content.strip():
-                                        is_collapsed = not config_manager.config.expanded_reasoning
-                                        reasoning_widget = Collapsible(
-                                            MessageContent(reasoning_content), 
-                                            title="Reasoning Process",
-                                            collapsed=is_collapsed
-                                        )
-                                        await model_bubble.mount(reasoning_widget)
-                                        
-                                        # Create new text widget for post-reasoning content
+                                    # Standard text
+                                    if not current_text_widget:
                                         current_text_widget = MessageContent("")
                                         await model_bubble.mount(current_text_widget)
-                                        current_text_buffer = "" 
-                                        last_update_time = 0
-
-                                    tool_status.set_status("Generating", running=True)
-                                    text_to_process = post
-                                else:
-                                    reasoning_content += text_to_process
-                                    text_to_process = ""
-
-                        # Update UI if not thinking
-                        if not is_thinking:
-                            now = time.monotonic()
-                            
-                            # Dynamic Throttling (Tweaked for better performance):
-                            buf_len = len(current_text_buffer)
-                            if buf_len < 1000: update_interval = 0.1
-                            elif buf_len < 3000: update_interval = 0.2
-                            elif buf_len < 8000: update_interval = 0.5
-                            else: update_interval = 1.0
-                            
-                            if now - last_update_time > update_interval:
-                                dist_from_bottom = chat_scroll.max_scroll_y - chat_scroll.scroll_y
-                                should_scroll = dist_from_bottom <= 2 or last_update_time == 0
-                                
-                                current_text_widget.update(current_text_buffer)
-                                
-                                if should_scroll:
-                                    # Scroll the WIDGET into view
-                                    self.call_after_refresh(current_text_widget.scroll_visible, animate=False, top=False)
+                                    current_text_buffer += remaining_text
+                                    await current_text_widget.update(current_text_buffer)
+                                    remaining_text = ""
+                            else: # We are thinking
+                                if "</think>" in remaining_text:
+                                    thought, post = remaining_text.split("</think>", 1)
+                                    if not current_thought_widget:
+                                        is_collapsed = not config_manager.config.expanded_reasoning
+                                        current_thought_widget = MessageContent("")
+                                        collapsible = Collapsible(current_thought_widget, title="Reasoning Process", collapsed=is_collapsed)
+                                        await model_bubble.mount(collapsible)
                                     
-                                last_update_time = now
+                                    current_thought_buffer += thought
+                                    await current_thought_widget.update(current_thought_buffer)
+                                    
+                                    # Exit thinking mode
+                                    is_thinking = False
+                                    current_thought_widget = None # Break thought block
+                                    current_thought_buffer = ""
+                                    remaining_text = post
+                                else:
+                                    # More thinking
+                                    if not current_thought_widget:
+                                        is_collapsed = not config_manager.config.expanded_reasoning
+                                        current_thought_widget = MessageContent("")
+                                        collapsible = Collapsible(current_thought_widget, title="Reasoning Process", collapsed=is_collapsed)
+                                        await model_bubble.mount(collapsible)
+                                    
+                                    current_thought_buffer += remaining_text
+                                    await current_thought_widget.update(current_thought_buffer)
+                                    remaining_text = ""
+                        
+                        # Auto-scroll after processing chunk
+                        self.call_after_refresh(chat_scroll.scroll_end, animate=False)
 
+                # Finalize turn if no tools called
                 if not tool_called:
-                    current_text_widget.update(current_text_buffer)
-                    # Final scroll to ensure bottom is visible
-                    self.call_after_refresh(current_text_widget.scroll_visible, animate=False, top=False)
                     if current_text_buffer.strip():
                         self.history.append({"role": "model", "content": current_text_buffer})
                     break
 
             tool_status.set_status("Ready", running=False)
             stats.status = "Idle"
-            self.refresh()
-            
+
         except Exception as e:
-            current_text_widget.update(f"\n\n[ERROR]: {str(e)}")
+            logger.error(f"Generate Error: {e}")
+            await model_bubble.mount(Static(f"[bold red]ERROR:[/bold red] {e}", classes="error-msg"))
             tool_status.set_status("Error", running=False)
             stats.status = "Error"
             self.refresh()

@@ -10,6 +10,8 @@ import sys
 from typing import List, Optional
 from plexir.core.config_manager import config_manager, ProviderConfig
 from plexir.core.session import SessionManager
+from plexir.ui.screens import ModelPicker
+from plexir.ui.widgets import StatsPanel
 
 class CommandProcessor:
     """
@@ -70,6 +72,8 @@ class CommandProcessor:
             return await self._auth(args)
         elif cmd == "/yolo":
             return self._yolo(args)
+        elif cmd == "/model":
+            return await self._model()
         elif cmd == "/reload":
             await self.app.action_reload_providers()
             return "Providers reloaded from config."
@@ -84,6 +88,8 @@ class CommandProcessor:
         return """
 **Plexir Commands:**
 - `/help`: Show this help message.
+- `/model`: Interactively pick provider and model.
+- `/yolo [start|stop]`: Toggle autonomous mode.
 - `/clear`: Clear the session history.
 - `/tools`: List available tools.
 - `/config [subcommand]`: Manage application settings.
@@ -192,14 +198,51 @@ class CommandProcessor:
             return f"YOLO Mode is currently **{state}**."
         else:
             return f"Unknown subcommand: {subcommand}"
-
     def _yolo_help(self) -> str:
         return """
 **`/yolo` Commands:**
 - `/yolo start`: Enable YOLO mode (disable safety checks).
 - `/yolo stop`: Disable YOLO mode (enable safety checks).
-- `/yolo status`: Check status.
 """
+
+    async def _model(self) -> Optional[str]:
+        """Handles /model command via an interactive picker."""
+        if not self.app.router.providers:
+            return "No providers available. Run /reload."
+
+        result = await self.app.push_screen_wait(
+            ModelPicker(self.app.router.providers, self.app.router.active_provider_index)
+        )
+
+        if result and result != "cancel":
+            try:
+                p_idx_str, model_name = result.split(":", 1)
+                p_idx = int(p_idx_str)
+                
+                provider = self.app.router.providers[p_idx]
+                
+                # 1. Update global configuration
+                p_config = config_manager.get_provider_config(provider.name)
+                if p_config:
+                    p_config.model_name = model_name
+                    config_manager.update_provider(provider.name, p_config)
+                
+                # 2. Update failover order (move selected to top)
+                order = config_manager.config.active_provider_order
+                if provider.name in order:
+                    order.remove(provider.name)
+                order.insert(0, provider.name)
+                config_manager.update_app_setting("active_provider_order", order)
+
+                # 3. Reload providers to apply changes globally
+                await self.app.action_reload_providers()
+
+                self.app.notify(f"Globally switched to {provider.name} -> {model_name}")
+                return f"Switched model to **{provider.name} / {model_name}** globally."
+            except Exception as e:
+                return f"Error updating model: {e}"
+
+        return None
 
     def _tools(self) -> str:
         """Lists all registered tools."""

@@ -9,6 +9,14 @@ This document provides a comprehensive guide to all available slash commands in 
 ### `/help`
 Displays a summary of all primary slash commands.
 
+### `/model`
+Opens an interactive model picker to switch the active provider and model globally. This updates your `config.json` and reloads providers.
+
+### `/yolo`
+Toggles YOLO mode (autonomous mode).
+- `/yolo start`: Disables safety confirmations for critical tools.
+- `/yolo stop`: Enables safety confirmations (default).
+
 ### `/clear`
 Clears the chat display and current conversation history. This cannot be undone.
 
