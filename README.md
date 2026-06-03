@@ -1,5 +1,7 @@
 # Plexir
 
+> **NOTICE**: This project has been archived in favor of a full rewrite and rebrand. It will no longer be developed further. Expect a significantly better replacement soon.
+
 **Plexir** is a modular, secure, and beautiful AI-powered terminal workspace. Designed for developers who live in the CLI, it combines multi-provider LLM orchestration, advanced agentic tools, and a secure, persistent Docker sandbox into a single keyboard-centric interface.
 
 ![Plexir UI](assets/image.png)
